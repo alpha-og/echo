@@ -35,8 +35,8 @@ struct EchoApp: App {
         VStack(alignment: .leading, spacing: 12) {
             playerCluster
             Divider()
-            deviceRow(title: "iPhone", side: .iphone, track: model.iphoneTrack)
-            deviceRow(title: "This Mac", side: .mac, track: model.macTrack)
+            deviceRow(title: formattedDeviceName(model.iphoneTrack?.deviceName ?? "iPhone"), side: .iphone, track: model.iphoneTrack)
+            deviceRow(title: formattedDeviceName(model.macTrack?.deviceName ?? "This Mac"), side: .mac, track: model.macTrack)
             Divider()
             relayRow
             Divider()
@@ -54,6 +54,17 @@ struct EchoApp: App {
         guard secs.isFinite, secs >= 0 else { return "0:00" }
         let total = Int(secs)
         return "\(total / 60):\(String(format: "%02d", total % 60))"
+    }
+
+    /// Hostnames arrive as `Name-Model.local`. Present them as names.
+    private func formattedDeviceName(_ raw: String) -> String {
+        var s = raw
+        if s.hasSuffix(".local") { s = String(s.dropLast(".local".count)) }
+        if s == "This Mac" { return s }
+        s = s.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        let clean = s.split(separator: " ").filter { !$0.isEmpty }.joined(separator: " ")
+        return clean.isEmpty ? raw : clean
     }
 
     private var playerCluster: some View {

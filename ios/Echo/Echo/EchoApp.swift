@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 
 @main
 struct EchoApp: App {
@@ -187,19 +188,29 @@ struct ContentView: View {
             tick = t
             reporter.pruneStaleMac(now: t)
         }
-        .sheet(item: $expandedSide) { side in
+        .navigationDestination(item: $expandedSide) { side in
             expandedPlayer(side: side)
         }
     }
 
     /// Compact per-device card: cover, titles, progress, transport.
-    /// The active side sorts first and carries the accent ring.
+    /// The active side sorts first and carries a live pill instead of chrome.
     private func deviceCard(side: Side, active: Bool) -> some View {
         Button { expandedSide = side } label: {
-            VStack(spacing: 10) {
-                HStack(spacing: 12) {
+            VStack(spacing: 12) {
+                HStack(spacing: 14) {
                     cardCover(side: side)
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(cardEyebrow(side: side))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                            Spacer()
+                            if active, cardIsPlaying(side: side) {
+                                livePill
+                            }
+                        }
                         MarqueeText(
                             text: cardTitle(side: side),
                             font: .headline,
@@ -211,40 +222,61 @@ struct ContentView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                        Text(cardDetails(side: side))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
-                    Spacer()
-                    HStack(spacing: 16) {
-                        Button { cardTransport(side: side, "previous") } label: {
-                            Image(systemName: "backward.fill")
-                                .font(.body)
-                        }
-                        Button { cardTransport(side: side, "toggle") } label: {
-                            Image(systemName: cardIsPlaying(side: side) ? "pause.fill" : "play.fill")
-                                .font(.system(size: 26))
-                        }
-                        Button { cardTransport(side: side, "next") } label: {
-                            Image(systemName: "forward.fill")
-                                .font(.body)
-                        }
-                    }
-                    .foregroundStyle(.primary)
-                    .buttonStyle(.plain)
-                    .disabled(!cardHasTrack(side: side))
                 }
                 ProgressView(value: cardProgress(side: side))
                     .controlSize(.small)
                     .tint(cardAccent(side: side))
-            }
-            .padding(14)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 20))
-            .overlay {
-                if active {
-                    RoundedRectangle(cornerRadius: 20)
-                        .strokeBorder(accent.opacity(0.6), lineWidth: 1.5)
+                HStack(spacing: 22) {
+                    Button { cardTransport(side: side, "previous") } label: {
+                        Image(systemName: "backward.fill")
+                            .font(.body)
+                    }
+                    Button { cardTransport(side: side, "toggle") } label: {
+                        Image(systemName: cardIsPlaying(side: side) ? "pause.fill" : "play.fill")
+                            .font(.system(size: 30))
+                    }
+                    Button { cardTransport(side: side, "next") } label: {
+                        Image(systemName: "forward.fill")
+                            .font(.body)
+                    }
+                    Spacer()
+                    Text(cardTimeLabel(side: side))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
+                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
+                .disabled(!cardHasTrack(side: side))
             }
+            .padding(16)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 20))
         }
         .buttonStyle(.plain)
+    }
+
+    /// Pulsing "Now Playing" marker on the active card. Static under
+    /// Reduce Motion.
+    private var livePill: some View {
+        HStack(spacing: 5) {
+            PulsingDot()
+            Text("Now Playing")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Hostnames arrive as `Name-Model.local`. Present them as names.
+    private func formattedDeviceName(_ raw: String) -> String {
+        var s = raw
+        if s.hasSuffix(".local") { s = String(s.dropLast(".local".count)) }
+        s = s.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        return s.split(separator: " ").filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     private func cardCover(side: Side) -> some View {
@@ -255,14 +287,14 @@ struct ContentView: View {
                     .scaledToFill()
             } else {
                 Image(systemName: "music.note")
-                    .font(.title3)
+                    .font(.title2)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.secondary.opacity(0.12))
             }
         }
-        .frame(width: 56, height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .frame(width: 88, height: 88)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
     private func cardArtwork(side: Side) -> UIImage? {
@@ -279,12 +311,31 @@ struct ContentView: View {
         return reporter.mac?.title ?? "Waiting for Mac"
     }
 
+    private func cardEyebrow(side: Side) -> String {
+        if side == .iphone {
+            return formattedDeviceName(UIDevice.current.name).uppercased()
+        }
+        return formattedDeviceName(reporter.mac?.deviceName ?? "Mac").uppercased()
+    }
+
     private func cardSubtitle(side: Side) -> String {
         if side == .iphone {
             return reporter.isIdle ? "Play Apple Music on this iPhone" : "This iPhone"
         }
         guard let m = reporter.mac else { return "Play Music.app on your Mac" }
-        return m.deviceName + " · " + m.artist + (m.isStale ? " · stale" : "")
+        return m.artist + (m.isStale ? " · stale" : "")
+    }
+
+    private func cardDetails(side: Side) -> String {
+        if side == .iphone {
+            return reporter.isIdle ? "Apple Music · idle" : "Apple Music · " + cardTimeLabel(side: side)
+        }
+        guard let m = reporter.mac else { return "Apple Music · idle" }
+        return "Apple Music · " + cardTimeLabel(side: side) + (m.isPlaying ? " · playing" : " · paused")
+    }
+
+    private func cardTimeLabel(side: Side) -> String {
+        side == .iphone ? reporter.localProgress().label : reporter.macProgress(now: tick).label
     }
 
     private func cardProgress(side: Side) -> Double {
@@ -317,20 +368,18 @@ struct ContentView: View {
         }
     }
 
-    /// Full player for the tapped card.
+    /// Full player page for the tapped card.
     private func expandedPlayer(side: Side) -> some View {
-        NavigationStack {
-            (side == .mac ? AnyView(macPlayer) : AnyView(localPlayer))
-                .padding(28)
-                .navigationTitle(side.rawValue)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { expandedSide = nil }
-                    }
-                }
+        Group {
+            if side == .mac {
+                macPlayer
+            } else {
+                localPlayer
+            }
         }
-        .presentationDetents([.medium, .large])
+        .padding(28)
+        .navigationTitle(side.rawValue)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var localPlayer: some View {

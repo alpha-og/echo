@@ -17,6 +17,9 @@ struct BarTrack {
     let updatedMs: Int64
     /// Unix millis this side polled it (display extrapolation starts here).
     let polledMs: Int64
+    /// Publishing device name as reported (`device_name`, hostnames arrive
+    /// as `Name-Model.local`). Nil for locally polled Mac state.
+    let deviceName: String?
 }
 
 /// Which side commands and display defer to. Mirrors `active_side` in
@@ -194,7 +197,8 @@ final class MenuModel: ObservableObject {
                     Data(base64Encoded: b64).flatMap(NSImage.init(data:))
                 },
                 updatedMs: (obj["timestamp_ms"] as? NSNumber)?.int64Value ?? nowMs,
-                polledMs: nowMs
+                polledMs: nowMs,
+                deviceName: obj["device_name"] as? String
             )
         }
         if music.present {
@@ -218,7 +222,8 @@ final class MenuModel: ObservableObject {
                                 duration: cur.duration, position: cur.position,
                                 isPlaying: cur.isPlaying,
                                 artwork: self.lastArtImage,
-                                updatedMs: cur.updatedMs, polledMs: cur.polledMs
+                                updatedMs: cur.updatedMs, polledMs: cur.polledMs,
+                                deviceName: cur.deviceName
                             )
                         }
                         self.publishMac()
@@ -231,7 +236,8 @@ final class MenuModel: ObservableObject {
                     duration: fresh.duration, position: fresh.position,
                     isPlaying: fresh.isPlaying,
                     artwork: lastArtImage,
-                    updatedMs: fresh.updatedMs, polledMs: fresh.polledMs
+                    updatedMs: fresh.updatedMs, polledMs: fresh.polledMs,
+                    deviceName: fresh.deviceName
                 )
             }
         } else {
@@ -278,7 +284,8 @@ final class MenuModel: ObservableObject {
     private func macTrackFrom(_ m: MusicApp.State) -> BarTrack {
         BarTrack(title: m.title, artist: m.artist, storeID: nil,
                  duration: m.duration, position: m.position, isPlaying: m.playing,
-                 artwork: nil, updatedMs: nowMs, polledMs: nowMs)
+                 artwork: nil, updatedMs: nowMs, polledMs: nowMs,
+                 deviceName: ProcessInfo.processInfo.hostName)
     }
 
     // MARK: - Mac publisher + command receiver (WS role=mac)
