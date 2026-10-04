@@ -96,6 +96,9 @@ final class NowPlayingReporter: ObservableObject {
     @Published var artworkAccent: UIColor?
     /// Mac snapshot from the relay (nil = Mac unseen/offline).
     @Published var mac: MacSnapshot?
+    /// Last Mac device name seen, kept after the snapshot expires so
+    /// titles never fall back to a generic label.
+    @Published var lastMacName: String?
     /// Incremented on pairing failure; the code field shakes on change.
     @Published var pairShake = 0
     var isIdle: Bool { !connected && storeID == nil }
@@ -557,6 +560,8 @@ final class NowPlayingReporter: ObservableObject {
 
     private func ingestMac(_ obj: [String: Any]) {
         let state = obj["state"] as? String ?? "unknown"
+        let deviceName = obj["device_name"] as? String ?? "Mac"
+        if !deviceName.isEmpty { lastMacName = deviceName }
         mac = MacSnapshot(
             title: obj["title"] as? String ?? "(no title)",
             artist: obj["artist"] as? String ?? "(no artist)",

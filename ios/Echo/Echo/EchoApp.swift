@@ -83,7 +83,6 @@ struct ContentView: View {
         NavigationStack {
             if reporter.paired {
                 playerView
-                    .navigationTitle("echo")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
@@ -315,7 +314,7 @@ struct ContentView: View {
         if side == .iphone {
             return formattedDeviceName(UIDevice.current.name).uppercased()
         }
-        return formattedDeviceName(reporter.mac?.deviceName ?? "Mac").uppercased()
+        return formattedDeviceName(reporter.mac?.deviceName ?? reporter.lastMacName ?? "Mac").uppercased()
     }
 
     private func cardSubtitle(side: Side) -> String {
@@ -398,8 +397,6 @@ struct ContentView: View {
             }
         }
         .overlay(alignment: .bottom) { commandPill }
-        .navigationTitle(side.rawValue)
-        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var localPlayer: some View {
