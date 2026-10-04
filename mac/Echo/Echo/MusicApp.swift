@@ -17,7 +17,7 @@ enum MusicApp {
         let position: Double
         let playing: Bool
         let present: Bool
-        /// Music.app output volume 0.0..=1.0.
+        /// System output volume 0.0..=1.0.
         let volume: Double
     }
 
@@ -50,23 +50,26 @@ enum MusicApp {
     }
 
     /// Current Mac playback, or `present: false` when Music is idle/closed.
+    /// Volume is the system output volume, so hardware keys and the slider
+    /// always agree. Read first: it works whether or not Music is running.
     nonisolated static func query() -> State {
+        let vol = (Double(run("return output volume of (get volume settings)") ?? "") ?? 50) / 100
         let src = """
             tell application "Music"
                 if it is running then
                     try
                         set t to current track
-                        return (name of t & "\\n" & artist of t & "\\n" & album of t & "\\n" & (duration of t as string) & "\\n" & (player position as string) & "\\n" & (player state as string) & "\\n" & (sound volume as string))
+                        return (name of t & "\\n" & artist of t & "\\n" & album of t & "\\n" & (duration of t as string) & "\\n" & (player position as string) & "\\n" & (player state as string))
                     end try
                 end if
             end tell
             """
         guard let out = run(src) else {
-            return State(title: "", artist: "", album: "", duration: 0, position: 0, playing: false, present: false, volume: 0.5)
+            return State(title: "", artist: "", album: "", duration: 0, position: 0, playing: false, present: false, volume: min(max(vol, 0), 1))
         }
         let parts = out.components(separatedBy: "\n")
-        guard parts.count >= 7 else {
-            return State(title: "", artist: "", album: "", duration: 0, position: 0, playing: false, present: false, volume: 0.5)
+        guard parts.count >= 6 else {
+            return State(title: "", artist: "", album: "", duration: 0, position: 0, playing: false, present: false, volume: min(max(vol, 0), 1))
         }
         return State(
             title: parts[0], artist: parts[1], album: parts[2],
@@ -74,7 +77,7 @@ enum MusicApp {
             position: Double(parts[4]) ?? 0,
             playing: parts[5] == "playing",
             present: true,
-            volume: min(max((Double(parts[6]) ?? 50) / 100, 0), 1)
+            volume: min(max(vol, 0), 1)
         )
     }
 
@@ -150,6 +153,12 @@ enum MusicApp {
     /// Execute a relay command target. Returns false when Music can't comply.
     @discardableResult
     nonisolated static func execute(action: String, position: Double?, volume: Double? = nil) -> Bool {
+        // System volume lives outside Music.app; setting it must not
+        // launch Music as a side effect.
+        if action == "volume" {
+            guard let vol = volume, vol.isFinite, (0...1).contains(vol) else { return false }
+            return run("set volume output volume \(Int(vol * 100))") != nil
+        }
         let cmd: String
         switch action {
         case "play": cmd = "play"
@@ -161,9 +170,6 @@ enum MusicApp {
         case "seek":
             guard let pos = position, pos.isFinite, pos >= 0 else { return false }
             cmd = "set player position to \(pos)"
-        case "volume":
-            guard let vol = volume, vol.isFinite, (0...1).contains(vol) else { return false }
-            cmd = "set sound volume to \(Int(vol * 100))"
         default: return false
         }
         return run("tell application \"Music\"\n\(cmd)\nend tell") != nil
