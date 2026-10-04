@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 /// macOS Music.app, driven over AppleScript (`osascript` child process).
 /// Fuzzy metadata only: AppleScript exposes no catalog store IDs, so Mac
 /// snapshots never carry `store_id` — exact handoff stays iPhone-led.
+///
+/// Explicitly nonisolated: the blocking `osascript` invocations must stay
+/// off the main actor, and nothing here touches UI state.
 enum MusicApp {
     struct State {
         let title: String
@@ -17,7 +20,7 @@ enum MusicApp {
     }
 
     /// One `osascript` invocation; nil on any failure (app closed, timeout).
-    private static func run(_ source: String) -> String? {
+    nonisolated private static func run(_ source: String) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = ["-e", source]
@@ -45,7 +48,7 @@ enum MusicApp {
     }
 
     /// Current Mac playback, or `present: false` when Music is idle/closed.
-    static func query() -> State {
+    nonisolated static func query() -> State {
         let src = """
             tell application "Music"
                 if it is running then
@@ -77,7 +80,7 @@ enum MusicApp {
     /// streamed tracks, so catalog search is the honest path. Track-change
     /// only, downscaled into the 40KB frame budget. No confident match
     /// beats a wrong cover: mismatches return nil.
-    static func coverArtwork(title: String, artist: String, maxBytes: Int = 40_000) async -> Data? {
+    nonisolated static func coverArtwork(title: String, artist: String, maxBytes: Int = 40_000) async -> Data? {
         var comps = URLComponents(string: "https://itunes.apple.com/search")
         comps?.queryItems = [
             URLQueryItem(name: "term", value: "\(title) \(artist)"),
@@ -143,7 +146,7 @@ enum MusicApp {
 
     /// Execute a relay command target. Returns false when Music can't comply.
     @discardableResult
-    static func execute(action: String, position: Double?) -> Bool {
+    nonisolated static func execute(action: String, position: Double?) -> Bool {
         let cmd: String
         switch action {
         case "play": cmd = "play"

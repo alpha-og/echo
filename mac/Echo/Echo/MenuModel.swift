@@ -100,7 +100,7 @@ final class MenuModel: ObservableObject {
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.stopSpawnedRelay()
+            Task { @MainActor [weak self] in self?.stopSpawnedRelay() }
         }
         let poll = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.refresh() }
