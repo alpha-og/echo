@@ -135,6 +135,12 @@ final class NowPlayingReporter: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     /// Set by an explicit Disconnect tap; cleared by Connect or launch.
     private var suppressAuto = false
+    /// Last connect() start. Overlapping handshakes are dropped so a flurry
+    /// of triggers cannot open a storm of sockets against a dead port.
+    private var lastConnectAt = Date.distantPast
+    /// Scene is backgrounded. The background one-shot only tears down while
+    /// this holds; a foreground connection owns its own socket.
+    private var inBackground = false
     private var retryAttempt = 0
     private var pathMonitor: NWPathMonitor?
     private var monitorQueue: DispatchQueue?
@@ -151,9 +157,13 @@ final class NowPlayingReporter: ObservableObject {
     }
 
     private func normalizedHost() -> String {
-        host.trimmingCharacters(in: .whitespacesAndNewlines)
+        var h = host.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
             .replacingOccurrences(of: "/.*$", with: "", options: .regularExpression)
+        // Bonjour names arrive FQDN-terminated (`host.local.`); the trailing
+        // dot is legal but some stacks handle the bare name better.
+        if h.hasSuffix(".") { h = String(h.dropLast()) }
+        return h
     }
 
     /// Reconnect with backoff (2s/5s/15s/30s), gated on network + user intent.
@@ -183,12 +193,14 @@ final class NowPlayingReporter: ObservableObject {
     /// silent-audio hold (if toggled) and publishes once immediately so a
     /// lock-screen pause isn't stuck showing "playing" on the Mac.
     func enterBackground() {
+        inBackground = true
         if keepAlive { audioHold.start() } else { audioHold.stop() }
         publish()
         scheduleBGRefresh()
     }
 
     func enterForeground() {
+        inBackground = false
         audioHold.stop()
         publish()
         connectIfPaired()
@@ -307,6 +319,8 @@ final class NowPlayingReporter: ObservableObject {
         }
         guard networkOK else { log("offline — will connect when network returns"); return }
         guard !connecting && !connected else { return }
+        guard Date().timeIntervalSince(lastConnectAt) >= 1.5 else { return }
+        lastConnectAt = Date()
         connecting = true
         // The relay may no longer recognize this token (state reset or
         // revoked elsewhere). Discard it and return to discovery rather
@@ -763,9 +777,8 @@ final class NowPlayingReporter: ObservableObject {
             try? await Task.sleep(for: .seconds(4))
             self?.publish()
             try? await Task.sleep(for: .seconds(2))
-            if self?.audioHold.running != true {
-                self?.disconnect(silent: true)
-            }
+            guard let self, self.inBackground, !self.audioHold.running else { return }
+            self.disconnect(silent: true)
         }
     }
 }
