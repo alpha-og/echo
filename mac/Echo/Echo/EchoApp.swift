@@ -63,9 +63,8 @@ struct EchoApp: App {
     /// again instead of sticking.
     private func expireMenuVolumeDraft() {
         guard menuVolumeDraft != nil else { return }
-        if let s = model.track?.volume,
-           let d = menuVolumeDraft,
-           abs(s - d) < 0.03 {
+        if let d = menuVolumeDraft,
+           abs(model.macVolume - d) < 0.03 {
             menuVolumeDraft = nil
         } else if Date().timeIntervalSince(menuVolumeDraftAt) > 5 {
             menuVolumeDraft = nil
@@ -164,24 +163,24 @@ struct EchoApp: App {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     LevelSlider(
-                        value: menuVolumeDraft ?? model.track?.volume ?? 0.5,
+                        value: menuVolumeDraft ?? model.macVolume,
                         accent: model.artworkTint.map(Color.init(nsColor:)) ?? .accentColor,
                         onChanged: { v in
                             menuVolumeDraft = v
                             menuVolumeDraftAt = Date()
-                            Task { await model.sendVolume(v) }
+                            Task { await model.setMacVolume(v) }
                         },
                         onEnded: { v in
                             menuVolumeDraft = v
                             menuVolumeDraftAt = Date()
-                            Task { await model.sendVolume(v, final: true) }
+                            Task { await model.setMacVolume(v, final: true) }
                         }
                     )
                     Image(systemName: "speaker.wave.3.fill")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .onChange(of: model.track?.volume) {
+                .onChange(of: model.macVolume) {
                     expireMenuVolumeDraft()
                 }
                 .onChange(of: tick) {

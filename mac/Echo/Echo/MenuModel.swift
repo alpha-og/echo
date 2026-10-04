@@ -55,6 +55,9 @@ final class MenuModel: ObservableObject {
     @Published var relayOnline = false
     /// Cover-derived tint for the progress bar (nil = system accent).
     @Published var artworkTint: NSColor?
+    /// Mac system output volume, polled regardless of Music state. The menu
+    /// volume row always shows this, never another side's volume.
+    @Published var macVolume = 0.5
     /// A phone is asking to pair right now (drives the popup, not the menu).
     @Published var pairPending = false
     @Published var pairDevice: String?
@@ -251,6 +254,7 @@ final class MenuModel: ObservableObject {
             lastArtB64 = nil
             lastArtImage = nil
         }
+        macVolume = music.volume
         if let img = track?.artwork {
             artworkTint = Self.averageColor(img)
         } else {
@@ -742,19 +746,15 @@ final class MenuModel: ObservableObject {
         await systemCommand(action)
     }
 
-    /// Set output volume on the effective target, throttled for drags.
-    /// Final positions always send.
-    func sendVolume(_ level: Double, final: Bool = false) async {
+    /// Set Mac system volume, throttled for drags. Final positions
+    /// always apply.
+    func setMacVolume(_ level: Double, final: Bool = false) async {
         let v = min(max(level, 0), 1)
         let now = Date()
         guard final || now.timeIntervalSince(lastVolumeSentAt) > 0.4 else { return }
         lastVolumeSentAt = now
-        if effectiveTarget == .mac {
-            MusicApp.execute(action: "volume", position: nil, volume: v)
-            await refreshStatus()
-        } else {
-            await send(["action": "volume", "target": "iphone", "volume": v])
-        }
+        MusicApp.execute(action: "volume", position: nil, volume: v)
+        await refreshStatus()
     }
 
     private var lastVolumeSentAt = Date.distantPast
