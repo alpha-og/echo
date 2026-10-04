@@ -1,0 +1,27 @@
+[package]
+name = "echo"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "echo"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"] }
+anyhow = "1"
+totp-rs = "5"
+rand = "0.8"
+local-ip-address = "0.6"
+hostname = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+dns-sd = "0.1"
