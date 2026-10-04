@@ -94,13 +94,16 @@ final class MenuModel: ObservableObject {
         bridge.onCommand = { [weak self] action in
             Task { @MainActor [weak self] in await self?.systemCommand(action) }
         }
-        // Quit takes any relay on our port with us, so no orphan keeps
-        // serving after the menu app is gone.
+        // Synchronous by necessity: an async hop may never execute — the
+        // process can exit before a scheduled task runs. queue:.main
+        // guarantees the main thread, so assuming isolation is sound.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.stopSpawnedRelay() }
+            MainActor.assumeIsolated {
+                self?.stopSpawnedRelay()
+            }
         }
         let poll = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.refresh() }
@@ -405,9 +408,10 @@ final class MenuModel: ObservableObject {
     }
 
     private static func isEcho(pid: Int32) -> Bool {
-        // Exact binary name only: a contains-match would also hit "Echo"
+        // Exact binary names only: a contains-match would also hit "Echo"
         // itself (it holds client sockets on :11447) and Stop would kill
-        // the menu app instead of the relay.
+        // the menu app instead of the relay. "amsync" is the pre-rename
+        // binary; it owns the same port and must not outlive this app.
         if pid == getpid() { return false }
         let ps = Process()
         ps.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -419,7 +423,7 @@ final class MenuModel: ObservableObject {
         ps.waitUntilExit()
         let comm = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return comm == "echo"
+        return comm == "echo" || comm == "amsync"
     }
 
     /// Stop every echo relay on our port (spawned child or terminal leftover).
