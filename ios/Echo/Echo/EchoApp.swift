@@ -42,6 +42,7 @@ struct ContentView: View {
     @State private var stableSide: Side = .iphone
     @State private var stableSince = Date()
     @State private var showSettings = false
+    @AppStorage("echo.onboarded") private var onboarded = false
     init(reporter: NowPlayingReporter, browser: EchoBrowser) {
         self.reporter = reporter as ReporterShim
         self._browser = ObservedObject(wrappedValue: browser)
@@ -97,8 +98,15 @@ struct ContentView: View {
                     }
             } else {
                 discoveryList
-                    .navigationTitle("Connect")
             }
+        }
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { !reporter.paired && !onboarded },
+                set: { if !$0 { onboarded = true } }
+            )
+        ) {
+            OnboardingView { onboarded = true }
         }
         .sheet(item: $selectedEcho) { echo in
             PairSheet(echo: echo, reporter: reporter)
@@ -347,30 +355,85 @@ struct ContentView: View {
     // MARK: - Discovery
 
     private var discoveryList: some View {
-        List {
-            Section("Nearby Macs") {
-                if browser.echoes.isEmpty {
-                    HStack(spacing: 8) {
-                        if browser.browsing { ProgressView().controlSize(.small) }
-                        Text(browser.browsing ? "Looking…" : "No Macs found")
+        ScrollView {
+            VStack(spacing: 24) {
+                VStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.12))
+                            .frame(width: 96, height: 96)
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 40, weight: .light))
                             .foregroundStyle(.secondary)
                     }
-                    Text("Start the relay on your Mac first")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    Text("Connect to your Mac")
+                        .font(.title2.weight(.bold))
+                    Text("Pick a nearby Mac to pair. Make sure Echo is running on it and both devices share the same Wi-Fi.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
+                .padding(.top, 32)
+
+                if browser.echoes.isEmpty {
+                    VStack(spacing: 10) {
+                        HStack(spacing: 10) {
+                            if browser.browsing {
+                                ProgressView().controlSize(.small)
+                            }
+                            Text(browser.browsing ? "Looking for Macs…" : "No Macs found")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                        Text("Start the relay on your Mac first")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 24)
                 } else {
-                    ForEach(browser.echoes) { echo in
-                        Button {
-                            reporter.host = "\(echo.host):\(echo.port)"
-                            selectedEcho = echo
-                        } label: {
-                            Label(echo.name, systemImage: "desktopcomputer")
+                    VStack(spacing: 10) {
+                        ForEach(browser.echoes) { echo in
+                            Button {
+                                reporter.host = "\(echo.host):\(echo.port)"
+                                selectedEcho = echo
+                            } label: {
+                                HStack(spacing: 14) {
+                                    Image(systemName: "desktopcomputer")
+                                        .font(.title3)
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 44, height: 44)
+                                        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(echo.name)
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                        Text("\(echo.host):\(echo.port)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .monospacedDigit()
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(12)
+                                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
+                    .padding(.horizontal, 24)
                 }
-            }
-            Section {
+
                 Button("Enter address manually") { showManual = true }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 32)
             }
         }
     }
