@@ -41,6 +41,7 @@ struct ContentView: View {
     @State private var tick = Date()
     @State private var stableSide: Side = .iphone
     @State private var stableSince = Date()
+    @State private var showSettings = false
     init(reporter: NowPlayingReporter, browser: EchoBrowser) {
         self.reporter = reporter as ReporterShim
         self._browser = ObservedObject(wrappedValue: browser)
@@ -75,21 +76,6 @@ struct ContentView: View {
         reporter.artworkAccent.map(Color.init(uiColor:)) ?? .accentColor
     }
 
-    /// Contrast-safe Connect background: pastels are darkened so white
-    /// text holds its contrast ratio on any cover-derived tint.
-    private var buttonTint: Color {
-        guard let ui = reporter.artworkAccent else { return .accentColor }
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
-        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        if lum > 0.6 {
-            return Color(uiColor: UIColor(red: r * 0.55, green: g * 0.55, blue: b * 0.55, alpha: 1))
-        }
-        return accent
-    }
-
-    private var buttonForeground: Color { .white }
-
     var body: some View {
         NavigationStack {
             if reporter.paired {
@@ -97,16 +83,15 @@ struct ContentView: View {
                     .navigationTitle("echo")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Circle()
+                                .fill(reporter.connected ? Color.green
+                                      : reporter.connecting ? Color.orange : Color.red)
+                                .frame(width: 8, height: 8)
+                        }
                         ToolbarItem(placement: .topBarTrailing) {
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(reporter.connected ? Color.green
-                                          : reporter.connecting ? Color.orange : Color.red)
-                                    .frame(width: 8, height: 8)
-                                Text(reporter.connected ? "Live"
-                                     : reporter.connecting ? "Connecting" : "Offline")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            Button { showSettings = true } label: {
+                                Image(systemName: "gear")
                             }
                         }
                     }
@@ -120,6 +105,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showManual) {
             ManualSheet(reporter: reporter)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(reporter: reporter)
         }
         .onAppear {
             if !reporter.paired {
@@ -170,8 +158,6 @@ struct ContentView: View {
             } else {
                 localPlayer
             }
-            Spacer()
-            connectButton
         }
         .padding(28)
         .background {
@@ -254,14 +240,20 @@ struct ContentView: View {
                 .shadow(radius: 12)
                 .id("\(m.title)\n\(m.artist)")
                 .transition(.opacity)
-                Text(m.title)
-                    .font(.title2.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                Text(m.deviceName + " · " + m.artist + (m.isStale ? " · stale" : ""))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                MarqueeText(
+                    text: m.title,
+                    font: .title2.weight(.semibold),
+                    height: 30
+                )
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                MarqueeText(
+                    text: m.deviceName + " · " + m.artist + (m.isStale ? " · stale" : ""),
+                    font: .subheadline,
+                    height: 22
+                )
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
                 let prog = reporter.macProgress(now: tick)
                 ProgressView(value: prog.fraction)
                     .tint(m.accent.map(Color.init(uiColor:)) ?? .accentColor)
@@ -331,45 +323,12 @@ struct ContentView: View {
     }
 
     private var trackView: some View {
-        Text(reporter.statusLine)
-            .font(.title2.weight(.semibold))
-            .multilineTextAlignment(.center)
-            .foregroundStyle(reporter.isIdle ? .secondary : .primary)
-            .id(reporter.storeID ?? "none")
-    }
-
-    private var connectButton: some View {
-        VStack(spacing: 8) {
-            if reporter.connected {
-                Button("Disconnect") { reporter.disconnect() }
-                    .buttonStyle(.bordered)
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.red)
-            } else {
-                Button(reporter.connecting ? "Connecting…" : "Connect") {
-                    reporter.connect()
-                }
-                .buttonStyle(.borderedProminent)
-                .font(.callout.weight(.semibold))
-                .tint(buttonTint)
-                .foregroundStyle(buttonForeground)
-                .disabled(reporter.connecting)
-            }
-            Toggle("Stay connected in background", isOn: $reporter.keepAlive)
-                .font(.footnote)
-                .tint(accent)
-                .frame(maxWidth: 260)
-            Text(reporter.keepAlive
-                 ? "Keeps sync live when locked (silent audio, extra battery)."
-                 : "iOS suspends sync shortly after leaving the app.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 260)
-            Button("Unpair this Mac") { reporter.unpair() }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
+        MarqueeText(
+            text: reporter.statusLine,
+            font: .title2.weight(.semibold),
+            height: 30
+        )
+        .foregroundStyle(reporter.isIdle ? .secondary : .primary)
     }
 
     @ViewBuilder

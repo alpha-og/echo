@@ -73,13 +73,21 @@ struct EchoApp: App {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .shadow(radius: 3)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.track.map { "\($0.title)" } ?? "Nothing playing")
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(model.track.map { "\($0.artist)" } ?? "echo")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    MarqueeText(
+                        text: model.track?.title ?? "Nothing playing",
+                        font: .headline,
+                        height: 24,
+                        centered: false
+                    )
+                    .lineLimit(1)
+                    MarqueeText(
+                        text: model.track?.artist ?? "echo",
+                        font: .subheadline,
+                        height: 20,
+                        centered: false
+                    )
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
                 Spacer()
                 HStack(spacing: 14) {
@@ -218,10 +226,13 @@ struct EchoApp: App {
                         }
                     }
                     if let t = track {
-                        Text("\(t.title) — \(t.artist)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        MarqueeText(
+                            text: "\(t.title) — \(t.artist)",
+                            font: .caption,
+                            height: 16,
+                            centered: false
+                        )
+                        .foregroundStyle(.secondary)
                     } else {
                         Text("Idle")
                             .font(.caption)
