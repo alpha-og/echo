@@ -378,6 +378,26 @@ struct ContentView: View {
             }
         }
         .padding(28)
+        .background {
+            if side == .iphone {
+                if let img = reporter.artwork {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 80)
+                        .opacity(0.4)
+                        .ignoresSafeArea()
+                }
+            } else if let data = reporter.mac?.artwork, let img = UIImage(data: data) {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .blur(radius: 80)
+                    .opacity(0.4)
+                    .ignoresSafeArea()
+            }
+        }
+        .overlay(alignment: .bottom) { commandPill }
         .navigationTitle(side.rawValue)
         .navigationBarTitleDisplayMode(.inline)
     }
