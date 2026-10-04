@@ -742,6 +742,23 @@ final class MenuModel: ObservableObject {
         await systemCommand(action)
     }
 
+    /// Set output volume on the effective target, throttled for drags.
+    /// Final positions always send.
+    func sendVolume(_ level: Double, final: Bool = false) async {
+        let v = min(max(level, 0), 1)
+        let now = Date()
+        guard final || now.timeIntervalSince(lastVolumeSentAt) > 0.4 else { return }
+        lastVolumeSentAt = now
+        if effectiveTarget == .mac {
+            MusicApp.execute(action: "volume", position: nil, volume: v)
+            await refreshStatus()
+        } else {
+            await send(["action": "volume", "target": "iphone", "volume": v])
+        }
+    }
+
+    private var lastVolumeSentAt = Date.distantPast
+
     /// Play the phone's current track in Mac Music.app at the same position.
     func handoffToMac() {
         guard let t = iphoneTrack, let sid = t.storeID else { return }

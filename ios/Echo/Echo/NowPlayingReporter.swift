@@ -208,9 +208,14 @@ final class NowPlayingReporter: ObservableObject {
 
     private func scheduleBGRefresh() {
         guard paired else { return }
-        let req = BGAppRefreshTaskRequest(identifier: "com.echo.refresh")
-        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        BGTaskScheduler.shared.submitTaskRequest(req, completionHandler: { _ in })
+        // One pending request is enough; duplicates only churn the system
+        // scheduler store.
+        BGTaskScheduler.shared.getPendingTaskRequests { requests in
+            guard !requests.contains(where: { $0.identifier == "com.echo.refresh" }) else { return }
+            let req = BGAppRefreshTaskRequest(identifier: "com.echo.refresh")
+            req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+            BGTaskScheduler.shared.submitTaskRequest(req, completionHandler: { _ in })
+        }
     }
 
     func startNetworkMonitor() {
@@ -717,10 +722,12 @@ final class NowPlayingReporter: ObservableObject {
         else { return }
         let pos = (obj["position"] as? NSNumber)?.doubleValue
         let sid = obj["store_id"] as? String
+        let vol = (obj["volume"] as? NSNumber)?.doubleValue
         // Defense in depth: relay validates too, but never execute an
-        // off-spec store_id/position on the phone.
+        // off-spec store_id/position/volume on the phone.
         if let p = pos, !(p.isFinite && p >= 0 && p <= 86400) { return }
         if let s = sid, !(s.count <= 20 && s.allSatisfy({ $0.isNumber && $0.isASCII })) { return }
+        if let v = vol, !(v.isFinite && (0...1).contains(v)) { return }
         lastCommandMs = Int64(Date().timeIntervalSince1970 * 1000)
         wasLocallyPlaying = player.playbackState == .playing
         flashCommand(label(for: action))
@@ -738,6 +745,9 @@ final class NowPlayingReporter: ObservableObject {
             player.setQueue(with: [sid])
             player.currentPlaybackTime = pos ?? 0
             player.play()
+        case "volume":
+            guard let vol else { return }
+            setSystemVolume(Float(vol))
         default: break
         }
         // Report back immediately so the Mac observes the change without
@@ -754,6 +764,7 @@ final class NowPlayingReporter: ObservableObject {
         case "previous", "prev": return "Previous track from Mac"
         case "seek": return "Seeked from Mac"
         case "play_store_id": return "Handoff from Mac"
+        case "volume": return "Volume from Mac"
         default: return "Command from Mac"
         }
     }
@@ -774,6 +785,29 @@ final class NowPlayingReporter: ObservableObject {
     private func log(_ msg: String) {
         let line = "[\(Date().formatted(date: .omitted, time: .standard))] \(msg)\n"
         logTail = String((logTail + line).suffix(2000))
+    }
+
+    /// Shared hidden volume view. There is no setter API for system volume;
+    /// driving its slider is the sanctioned path.
+    private static let volumeView: MPVolumeView = {
+        let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 10, height: 10))
+        view.showsRouteButton = false
+        view.alpha = 0.01
+        return view
+    }()
+
+    private func setSystemVolume(_ level: Float) {
+        let view = Self.volumeView
+        if view.window == nil {
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first { $0.isKeyWindow }?
+                .addSubview(view)
+        }
+        guard let slider = view.subviews.first(where: { $0 is UISlider }) as? UISlider else { return }
+        slider.value = level
+        slider.sendActions(for: .valueChanged)
     }
 
     /// BGAppRefresh entry: open the socket just long enough to push one

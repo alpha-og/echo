@@ -30,6 +30,7 @@ struct EchoApp: App {
     }
 
     @State private var tick = Date()
+    @State private var menuVolumeDraft: Double?
 
     private var menuContent: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -143,6 +144,32 @@ struct EchoApp: App {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+                HStack(spacing: 8) {
+                    Image(systemName: "speaker.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    LevelSlider(
+                        value: menuVolumeDraft ?? model.track?.volume ?? 0.5,
+                        accent: model.artworkTint.map(Color.init(nsColor:)) ?? .accentColor,
+                        onChanged: { v in
+                            menuVolumeDraft = v
+                            Task { await model.sendVolume(v) }
+                        },
+                        onEnded: { v in
+                            menuVolumeDraft = v
+                            Task { await model.sendVolume(v, final: true) }
+                        }
+                    )
+                    Image(systemName: "speaker.wave.3.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .onChange(of: model.track?.volume) {
+                    if let d = menuVolumeDraft,
+                       let s = model.track?.volume, abs(s - d) < 0.03 {
+                        menuVolumeDraft = nil
+                    }
+                }
             }
         }
     }

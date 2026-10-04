@@ -533,7 +533,7 @@ struct ContentView: View {
         HStack(spacing: 10) {
             Image(systemName: "speaker.fill")
                 .foregroundStyle(.secondary)
-            SystemVolumeSlider(tint: accent)
+            SystemVolumeSlider(accent: accent)
             Image(systemName: "speaker.wave.3.fill")
                 .foregroundStyle(.secondary)
         }
@@ -543,21 +543,18 @@ struct ContentView: View {
         HStack(spacing: 10) {
             Image(systemName: "speaker.fill")
                 .foregroundStyle(.secondary)
-            Slider(value: macVolumeBinding, in: 0...1)
-                .tint(accent)
+            LevelSlider(
+                value: macVolumeDraft ?? reporter.mac?.volume ?? 0.5,
+                accent: accent,
+                onChanged: { macVolumeDraft = $0 },
+                onEnded: { v in
+                    macVolumeDraft = v
+                    reporter.sendToMac("volume", volume: v)
+                }
+            )
             Image(systemName: "speaker.wave.3.fill")
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private var macVolumeBinding: Binding<Double> {
-        Binding(
-            get: { macVolumeDraft ?? reporter.mac?.volume ?? 0.5 },
-            set: { v in
-                macVolumeDraft = v
-                reporter.sendToMac("volume", volume: v)
-            }
-        )
     }
 
     private static func clock(_ secs: Double) -> String {
