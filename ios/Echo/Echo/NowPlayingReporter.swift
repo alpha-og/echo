@@ -428,18 +428,26 @@ final class NowPlayingReporter: ObservableObject {
             setArtwork(nil, nil)
             return
         }
-        // Fallback chain: prefer a smaller cover over none, inside the
-        // 40KB frame budget.
+        // Full resolution for local display; a downscaled copy rides the
+        // relay inside its frame budget.
+        if let big = art.image(at: CGSize(width: 1024, height: 1024)) {
+            artwork = big
+            artworkAccent = Self.averageColor(big)
+        } else {
+            artwork = nil
+            artworkAccent = nil
+        }
+        // Fallback chain: prefer a smaller cover over none on the relay.
         for (edge, quality) in [(512, 0.55), (320, 0.5), (192, 0.5), (128, 0.4)] {
             if let img = art.image(at: CGSize(width: CGFloat(edge), height: CGFloat(edge))),
                let data = img.jpegData(compressionQuality: quality),
                data.count <= 40_000 {
-                setArtwork(UIImage(data: data), data.base64EncodedString())
+                artworkB64 = data.base64EncodedString()
                 return
             }
         }
         log("artwork skipped (too large even at 128px)")
-        setArtwork(nil, nil)
+        artworkB64 = nil
     }
 
     private func setArtwork(_ img: UIImage?, _ b64: String?) {

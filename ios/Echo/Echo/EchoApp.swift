@@ -483,17 +483,21 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(radius: 12)
     }
 
     private func titleArtist(title: String, artist: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            MarqueeText(text: title, font: .title2.weight(.semibold), height: 30, centered: false)
-            MarqueeText(text: artist, font: .title3, height: 26, centered: false)
-                .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                MarqueeText(text: title, font: .title2.weight(.semibold), height: 30, centered: false)
+                MarqueeText(text: artist, font: .title3, height: 26, centered: false)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            AirPlayButton()
+                .frame(width: 28, height: 28)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func timeRow(elapsed: Double, duration: Double) -> some View {
