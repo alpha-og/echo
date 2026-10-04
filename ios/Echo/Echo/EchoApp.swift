@@ -41,6 +41,7 @@ struct ContentView: View {
     @State private var stableSide: Side = .iphone
     @State private var stableSince = Date()
     @State private var showSettings = false
+    @State private var macVolumeDraft: Double?
     @AppStorage("echo.onboarded") private var onboarded = false
     init(reporter: NowPlayingReporter, browser: EchoBrowser) {
         self.reporter = reporter as ReporterShim
@@ -400,9 +401,9 @@ struct ContentView: View {
     }
 
     private var localPlayer: some View {
-        VStack(spacing: 8) {
-            coverView
+        VStack(spacing: 14) {
             if reporter.isIdle {
+                bigCover(image: nil)
                 Text("Nothing playing")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -410,77 +411,46 @@ struct ContentView: View {
                     .font(.subheadline)
                     .foregroundStyle(.tertiary)
             } else {
-                let lp = reporter.localProgress()
-                trackView
-                ProgressView(value: lp.fraction)
-                    .tint(accent)
-                    .frame(maxWidth: 240)
-                Text(lp.label)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                let pos = reporter.localPosition()
+                let frac = pos.duration > 0 ? min(max(pos.elapsed / pos.duration, 0), 1) : 0
+                bigCover(image: reporter.artwork)
+                titleArtist(title: reporter.trackTitle, artist: reporter.trackArtist)
+                Scrubber(fraction: frac, accent: accent) { f in
+                    if pos.duration > 0 { reporter.seekLocal(to: f * pos.duration) }
+                }
+                timeRow(elapsed: pos.elapsed, duration: pos.duration)
+                pageTransport(
+                    isPlaying: reporter.playerIsPlaying,
+                    onToggle: { reporter.localTransport("toggle") },
+                    onPrev: { reporter.localTransport("previous") },
+                    onNext: { reporter.localTransport("next") }
+                )
+                localVolumeRow
             }
-            transportRow(
-                isPlaying: reporter.playerIsPlaying,
-                onToggle: { reporter.localTransport("toggle") },
-                onPrev: { reporter.localTransport("previous") },
-                onNext: { reporter.localTransport("next") }
-            )
         }
     }
 
     private var macPlayer: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 14) {
             if let m = reporter.mac {
-                Group {
-                    if let data = m.artwork, let img = UIImage(data: data) {
-                        Image(uiImage: img)
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 64))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(Color.secondary.opacity(0.12))
-                    }
+                let pos = reporter.macPosition(now: tick)
+                let frac = pos.duration > 0 ? min(max(pos.elapsed / pos.duration, 0), 1) : 0
+                bigCover(image: m.artwork.flatMap(UIImage.init(data:)))
+                    .id("\(m.title)\n\(m.artist)")
+                titleArtist(title: m.title, artist: m.artist + (m.isStale ? " · stale" : ""))
+                Scrubber(fraction: frac, accent: m.accent.map(Color.init(uiColor:)) ?? .accentColor) { f in
+                    if pos.duration > 0 { reporter.sendToMac("seek", position: f * pos.duration) }
                 }
-                .frame(width: 300, height: 300)
-                .clipShape(RoundedRectangle(cornerRadius: 28))
-                .shadow(radius: 12)
-                .id("\(m.title)\n\(m.artist)")
-                .transition(.opacity)
-                MarqueeText(
-                    text: m.title,
-                    font: .title2.weight(.semibold),
-                    height: 30
-                )
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                MarqueeText(
-                    text: m.deviceName + " · " + m.artist + (m.isStale ? " · stale" : ""),
-                    font: .subheadline,
-                    height: 22
-                )
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                let prog = reporter.macProgress(now: tick)
-                ProgressView(value: prog.fraction)
-                    .tint(m.accent.map(Color.init(uiColor:)) ?? .accentColor)
-                    .frame(maxWidth: 240)
-                Text(prog.label)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                transportRow(
+                timeRow(elapsed: pos.elapsed, duration: pos.duration)
+                pageTransport(
                     isPlaying: m.isPlaying,
                     onToggle: { reporter.sendToMac(m.isPlaying ? "pause" : "play") },
                     onPrev: { reporter.sendToMac("previous") },
                     onNext: { reporter.sendToMac("next") }
                 )
+                macVolumeRow(accent: m.accent.map(Color.init(uiColor:)) ?? .accentColor)
             } else {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 192, height: 160)
+                bigCover(image: nil)
                 Text("Waiting for Mac")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -490,54 +460,106 @@ struct ContentView: View {
                     .multilineTextAlignment(.center)
             }
         }
+        .onChange(of: reporter.mac?.volume) {
+            if let d = macVolumeDraft, let s = reporter.mac?.volume, abs(s - d) < 0.03 {
+                macVolumeDraft = nil
+            }
+        }
     }
 
-    private func transportRow(
+    private func bigCover(image: UIImage?) -> some View {
+        Group {
+            if let img = image {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(1, contentMode: .fit)
+            } else {
+                Image(systemName: "music.note")
+                    .font(.system(size: 72))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(1, contentMode: .fit)
+                    .background(Color.secondary.opacity(0.12))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .shadow(radius: 12)
+    }
+
+    private func titleArtist(title: String, artist: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            MarqueeText(text: title, font: .title2.weight(.semibold), height: 30, centered: false)
+            MarqueeText(text: artist, font: .title3, height: 26, centered: false)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func timeRow(elapsed: Double, duration: Double) -> some View {
+        HStack {
+            Text(Self.clock(elapsed))
+            Spacer()
+            Text("-" + Self.clock(max(duration - elapsed, 0)))
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+    }
+
+    private func pageTransport(
         isPlaying: Bool,
         onToggle: @escaping () -> Void,
         onPrev: @escaping () -> Void,
         onNext: @escaping () -> Void
     ) -> some View {
-        HStack(spacing: 36) {
-            Button(action: onPrev) { Image(systemName: "backward.fill").font(.title2) }
+        HStack(spacing: 52) {
+            Button(action: onPrev) { Image(systemName: "backward.fill").font(.title) }
             Button(action: onToggle) {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 40))
+                    .font(.system(size: 64))
             }
-            Button(action: onNext) { Image(systemName: "forward.fill").font(.title2) }
+            Button(action: onNext) { Image(systemName: "forward.fill").font(.title) }
         }
         .foregroundStyle(.primary)
-        .padding(.top, 4)
+        .padding(.vertical, 4)
     }
 
-    private var coverView: some View {
-        Group {
-            if let img = reporter.artwork {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Image(systemName: "music.note")
-                    .font(.system(size: 64))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.secondary.opacity(0.12))
-            }
+    private var localVolumeRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.fill")
+                .foregroundStyle(.secondary)
+            SystemVolumeSlider(tint: accent)
+            Image(systemName: "speaker.wave.3.fill")
+                .foregroundStyle(.secondary)
         }
-        .frame(width: 300, height: 300)
-        .clipShape(RoundedRectangle(cornerRadius: 28))
-        .shadow(radius: 12)
-        .id(reporter.storeID ?? "none")
-        .transition(.opacity)
     }
 
-    private var trackView: some View {
-        MarqueeText(
-            text: reporter.statusLine,
-            font: .title2.weight(.semibold),
-            height: 30
+    private func macVolumeRow(accent: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.fill")
+                .foregroundStyle(.secondary)
+            Slider(value: macVolumeBinding, in: 0...1)
+                .tint(accent)
+            Image(systemName: "speaker.wave.3.fill")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var macVolumeBinding: Binding<Double> {
+        Binding(
+            get: { macVolumeDraft ?? reporter.mac?.volume ?? 0.5 },
+            set: { v in
+                macVolumeDraft = v
+                reporter.sendToMac("volume", volume: v)
+            }
         )
-        .foregroundStyle(reporter.isIdle ? .secondary : .primary)
+    }
+
+    private static func clock(_ secs: Double) -> String {
+        guard secs.isFinite, secs >= 0 else { return "0:00" }
+        let total = Int(secs)
+        return "\(total / 60):\(String(format: "%02d", total % 60))"
     }
 
     @ViewBuilder

@@ -20,6 +20,8 @@ struct BarTrack {
     /// Publishing device name as reported (`device_name`, hostnames arrive
     /// as `Name-Model.local`). Nil for locally polled Mac state.
     let deviceName: String?
+    /// Output volume 0.0..=1.0 when known.
+    let volume: Double?
 }
 
 /// Which side commands and display defer to. Mirrors `active_side` in
@@ -198,7 +200,8 @@ final class MenuModel: ObservableObject {
                 },
                 updatedMs: (obj["timestamp_ms"] as? NSNumber)?.int64Value ?? nowMs,
                 polledMs: nowMs,
-                deviceName: obj["device_name"] as? String
+                deviceName: obj["device_name"] as? String,
+                volume: (obj["volume"] as? NSNumber)?.doubleValue
             )
         }
         if music.present {
@@ -223,7 +226,8 @@ final class MenuModel: ObservableObject {
                                 isPlaying: cur.isPlaying,
                                 artwork: self.lastArtImage,
                                 updatedMs: cur.updatedMs, polledMs: cur.polledMs,
-                                deviceName: cur.deviceName
+                                deviceName: cur.deviceName,
+                                volume: cur.volume
                             )
                         }
                         self.publishMac()
@@ -237,7 +241,8 @@ final class MenuModel: ObservableObject {
                     isPlaying: fresh.isPlaying,
                     artwork: lastArtImage,
                     updatedMs: fresh.updatedMs, polledMs: fresh.polledMs,
-                    deviceName: fresh.deviceName
+                    deviceName: fresh.deviceName,
+                    volume: fresh.volume
                 )
             }
         } else {
@@ -285,7 +290,8 @@ final class MenuModel: ObservableObject {
         BarTrack(title: m.title, artist: m.artist, storeID: nil,
                  duration: m.duration, position: m.position, isPlaying: m.playing,
                  artwork: nil, updatedMs: nowMs, polledMs: nowMs,
-                 deviceName: ProcessInfo.processInfo.hostName)
+                 deviceName: ProcessInfo.processInfo.hostName,
+                 volume: m.volume)
     }
 
     // MARK: - Mac publisher + command receiver (WS role=mac)
@@ -329,7 +335,8 @@ final class MenuModel: ObservableObject {
         else if let inner = obj["Command"] as? [String: Any], let a = inner["action"] as? String { action = a }
         else { return }
         let pos = (obj["position"] as? NSNumber)?.doubleValue
-        if MusicApp.execute(action: action, position: pos) {
+        let vol = (obj["volume"] as? NSNumber)?.doubleValue
+        if MusicApp.execute(action: action, position: pos, volume: vol) {
             Task {
                 try? await Task.sleep(for: .milliseconds(400))
                 await self.refreshStatus()
@@ -347,6 +354,7 @@ final class MenuModel: ObservableObject {
             "state": m.isPlaying ? "playing" : "paused",
             "timestamp_ms": m.updatedMs, "origin": "mac",
             "device_name": ProcessInfo.processInfo.hostName,
+            "volume": m.volume ?? 0.5,
         ]
         // Cover rides along only while it matches the current track.
         if let a = lastArtB64 { snap["artwork"] = a }

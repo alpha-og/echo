@@ -52,6 +52,8 @@ pub(crate) enum SendAction {
     Next,
     Previous,
     Seek { position: f64 },
+    /// Set output volume 0.0..=1.0 on the target side.
+    Volume { level: f32 },
     /// Exact handoff: tell iPhone to play catalog id at position.
     PlayId { store_id: String, #[arg(long, default_value_t = 0.0)] position: f64 },
 }
@@ -112,6 +114,7 @@ pub(crate) async fn send(server: &str, to: &str, action: SendAction) -> anyhow::
         SendAction::Next => Command::next(),
         SendAction::Previous => Command::previous(),
         SendAction::Seek { position } => Command::seek(position),
+        SendAction::Volume { level } => Command::volume(level),
         SendAction::PlayId { store_id, position } => Command::play_store_id(store_id, position),
     };
     let cmd = match to {

@@ -51,6 +51,9 @@ pub struct NowPlayingState {
     /// Playback rate at `timestamp_ms` (1.0 = playing, 0.0 = paused).
     #[serde(default)]
     pub rate: f32,
+    /// Output volume 0.0..=1.0 when the publisher reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f32>,
     #[serde(default)]
     pub state: PlaybackState,
     /// Unix millis when `elapsed` was sampled. Lets Mac extrapolate position.
@@ -134,6 +137,11 @@ impl NowPlayingState {
         if !self.rate.is_finite() || self.rate < 0.0 || self.rate > 4.0 {
             return Err("rate out of range".into());
         }
+        if let Some(v) = self.volume
+            && (!v.is_finite() || !(0.0..=1.0).contains(&v))
+        {
+            return Err("volume out of range".into());
+        }
         if self.queue_ids.len() > Self::MAX_QUEUE {
             return Err("queue_ids too long".into());
         }
@@ -169,6 +177,9 @@ pub struct Command {
     /// Catalog id for `play_store_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_id: Option<String>,
+    /// Output volume 0.0..=1.0 for `volume`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f32>,
     /// Who should execute it. `Unknown` (legacy clients) means iphone.
     #[serde(default)]
     pub target: DeviceRole,
@@ -184,11 +195,12 @@ pub enum CommandAction {
     Previous,
     Seek,
     PlayStoreId,
+    Volume,
 }
 
 impl Command {
     fn base(action: CommandAction, position: Option<f64>, store_id: Option<String>) -> Self {
-        Self { action, position, store_id, target: DeviceRole::Unknown }
+        Self { action, position, store_id, volume: None, target: DeviceRole::Unknown }
     }
     /// Route this command at a specific device.
     pub fn to(mut self, target: DeviceRole) -> Self {
@@ -217,6 +229,9 @@ impl Command {
     pub fn seek(position: f64) -> Self {
         Self::base(CommandAction::Seek, Some(position), None)
     }
+    pub fn volume(level: f32) -> Self {
+        Self { action: CommandAction::Volume, position: None, store_id: None, volume: Some(level), target: DeviceRole::Unknown }
+    }
     pub fn play_store_id(store_id: impl Into<String>, position: f64) -> Self {
 Self::base(CommandAction::PlayStoreId, Some(position), Some(store_id.into()))
     }
@@ -227,6 +242,11 @@ Self::base(CommandAction::PlayStoreId, Some(position), Some(store_id.into()))
             && (!p.is_finite() || p < 0.0 || p > NowPlayingState::MAX_SECS)
         {
             return Err("position out of range".into());
+        }
+        if let Some(v) = self.volume
+            && (!v.is_finite() || !(0.0..=1.0).contains(&v))
+        {
+            return Err("volume out of range".into());
         }
         if let Some(id) = &self.store_id
             && !is_store_id(id)
@@ -239,6 +259,9 @@ Self::base(CommandAction::PlayStoreId, Some(position), Some(store_id.into()))
             }
             CommandAction::PlayStoreId if self.store_id.is_none() => {
                 return Err("play_store_id requires store_id".into());
+            }
+            CommandAction::Volume if self.volume.is_none() => {
+                return Err("volume requires volume".into());
             }
             _ => {}
         }
@@ -309,6 +332,7 @@ mod tests {
             queue_ids: vec![],
             device_name: Some("iPhone".into()),
             artwork: None,
+            volume: None,
             origin: DeviceRole::Iphone,
         };
         let json = serde_json::to_string(&s).unwrap();
@@ -353,6 +377,20 @@ mod tests {
     fn ws_envelope_tagged() {        let m = WsMessage::Command(Command::pause());
         let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
         assert_eq!(v["type"], "command");
+    }
+
+    #[test]
+    fn rejects_bad_volume() {
+        assert!(Command::volume(0.5).to(DeviceRole::Mac).validate().is_ok());
+        assert!(Command::volume(1.5).validate().is_err());
+        assert!(Command::volume(f32::NAN).validate().is_err());
+        let mut c = Command::play();
+        c.action = CommandAction::Volume;
+        assert!(c.validate().is_err());
+        let s = NowPlayingState { volume: Some(2.0), ..Default::default() };
+        assert!(s.validate().is_err());
+        let s = NowPlayingState { volume: Some(0.7), ..Default::default() };
+        assert!(s.validate().is_ok());
     }
 
     #[test]

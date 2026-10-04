@@ -5,6 +5,7 @@ import UIKit
 import CoreImage
 import Network
 import BackgroundTasks
+import AVFoundation
 
 /// Publishes systemMusicPlayer Now Playing to the Rust relay over WS,
 /// and executes Commands (play/pause/next/prev/seek/playStoreID) from Mac.
@@ -22,6 +23,8 @@ struct MacSnapshot: Equatable {
     let duration: Double
     let deviceName: String
     let updatedMs: Int64
+    /// Output volume 0.0..=1.0 when the Mac reports it.
+    let volume: Double?
     /// Cover bytes when the relay has them (sticky across heartbeats).
     let artwork: Data?
     /// Cover-derived accent, mirroring the local player.
@@ -49,7 +52,7 @@ struct MacSnapshot: Equatable {
         lhs.title == rhs.title && lhs.artist == rhs.artist && lhs.state == rhs.state
             && lhs.position == rhs.position && lhs.duration == rhs.duration
             && lhs.deviceName == rhs.deviceName && lhs.updatedMs == rhs.updatedMs
-            && lhs.artwork == rhs.artwork
+            && lhs.artwork == rhs.artwork && lhs.volume == rhs.volume
     }
 
     var isStale: Bool {
@@ -65,6 +68,8 @@ final class NowPlayingReporter: ObservableObject {
     @Published var connecting = false
     @Published var statusLine = "(not connected)"
     @Published var storeID: String?
+    @Published var trackTitle = ""
+    @Published var trackArtist = ""
     @Published var logTail = ""
     /// Local playback progress for the progress bar (exact, no extrapolation).
     @Published var progress: Double = 0
@@ -470,6 +475,7 @@ final class NowPlayingReporter: ObservableObject {
             "timestamp_ms": Int64(Date().timeIntervalSince1970 * 1000),
             "device_name": UIDevice.current.name,
             "origin": "iphone",
+            "volume": AVAudioSession.sharedInstance().outputVolume,
         ]
         if let item {
             if let v = item.value(forProperty: MPMediaItemPropertyTitle) as? String { d["title"] = v }
@@ -515,6 +521,10 @@ final class NowPlayingReporter: ObservableObject {
         // Publish runs continuously; assign only on change to avoid
         // redundant view updates on identical state.
         if line != statusLine { statusLine = line }
+        let title = snap["title"] as? String ?? ""
+        let artist = snap["artist"] as? String ?? ""
+        if title != trackTitle { trackTitle = title }
+        if artist != trackArtist { trackArtist = artist }
         if sid != storeID { storeID = sid }
         let elapsed = snap["elapsed"] as? Double ?? 0
         let duration = snap["duration"] as? Double ?? 0
@@ -572,6 +582,7 @@ final class NowPlayingReporter: ObservableObject {
             deviceName: obj["device_name"] as? String ?? "Mac",
             updatedMs: (obj["timestamp_ms"] as? NSNumber)?.int64Value
                 ?? Int64(Date().timeIntervalSince1970 * 1000),
+            volume: (obj["volume"] as? NSNumber)?.doubleValue,
             artwork: (obj["artwork"] as? String).flatMap { Data(base64Encoded: $0) }
         )
         updateActiveLatch()
@@ -590,15 +601,17 @@ final class NowPlayingReporter: ObservableObject {
     /// Control the Mac from here (target=mac). Takeover mirrors the Mac
     /// side: if this phone is playing, pause it first so the Mac becomes
     /// the only player.
-    func sendToMac(_ action: String) {
+    func sendToMac(_ action: String, position: Double? = nil, volume: Double? = nil) {
         // The local pause is the takeover itself: record it so publish()
         // does not answer with a reciprocal pause.
         if action != "pause", player.playbackState == .playing {
             player.pause()
             lastTakeoverMs = Int64(Date().timeIntervalSince1970 * 1000)
         }
-        guard let data = try? JSONSerialization.data(withJSONObject:
-                ["type": "command", "action": action, "target": "mac"]),
+        var obj: [String: Any] = ["type": "command", "action": action, "target": "mac"]
+        if let position { obj["position"] = position }
+        if let volume { obj["volume"] = volume }
+        guard let data = try? JSONSerialization.data(withJSONObject: obj),
               let text = String(data: data, encoding: .utf8) else { return }
         ws?.send(.string(text)) { _ in }
     }
@@ -617,6 +630,21 @@ final class NowPlayingReporter: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.publish() }
     }
 
+    /// Scrub the local queue to a position in seconds.
+    func seekLocal(to position: Double) {
+        guard position.isFinite, position >= 0 else { return }
+        player.currentPlaybackTime = position
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.publish() }
+    }
+
+    /// Raw local position for the scrubber (seconds, seconds).
+    func localPosition() -> (elapsed: Double, duration: Double) {
+        let elapsed = player.currentPlaybackTime
+        let duration = (player.nowPlayingItem?.value(
+            forProperty: MPMediaItemPropertyPlaybackDuration) as? NSNumber)?.doubleValue ?? 0
+        return (elapsed.isFinite ? elapsed : 0, duration)
+    }
+
     /// Live local progress for the 0.5s display tick.
     func localProgress() -> (fraction: Double, label: String) {
         let elapsed = player.currentPlaybackTime
@@ -629,7 +657,14 @@ final class NowPlayingReporter: ObservableObject {
 
     /// Mac progress extrapolated from its snapshot (elapsed + rate × age).
     func macProgress(now: Date = Date()) -> (fraction: Double, label: String) {
-        guard let m = mac else { return (0, "--:-- / --:--") }
+        let (pos, dur) = macPosition(now: now)
+        let frac = dur > 0 ? min(pos / dur, 1) : 0
+        return (frac, "\(Self.clock(pos)) / \(Self.clock(dur))")
+    }
+
+    /// Raw Mac position for the scrubber (seconds, seconds).
+    func macPosition(now: Date = Date()) -> (elapsed: Double, duration: Double) {
+        guard let m = mac else { return (0, 0) }
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         var pos = m.position
         if m.isPlaying {
@@ -637,8 +672,8 @@ final class NowPlayingReporter: ObservableObject {
         }
         pos = max(pos, 0)
         let dur = m.duration
-        let frac = dur > 0 ? min(pos / dur, 1) : 0
-        return (frac, "\(Self.clock(pos)) / \(Self.clock(dur))")
+        if dur > 0 { pos = min(pos, dur) }
+        return (pos, dur)
     }
 
     /// Drop the Mac card after 30s without a snapshot (relay or menu app

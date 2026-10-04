@@ -17,6 +17,8 @@ enum MusicApp {
         let position: Double
         let playing: Bool
         let present: Bool
+        /// Music.app output volume 0.0..=1.0.
+        let volume: Double
     }
 
     /// One `osascript` invocation; nil on any failure (app closed, timeout).
@@ -54,24 +56,25 @@ enum MusicApp {
                 if it is running then
                     try
                         set t to current track
-                        return (name of t & "\\n" & artist of t & "\\n" & album of t & "\\n" & (duration of t as string) & "\\n" & (player position as string) & "\\n" & (player state as string))
+                        return (name of t & "\\n" & artist of t & "\\n" & album of t & "\\n" & (duration of t as string) & "\\n" & (player position as string) & "\\n" & (player state as string) & "\\n" & (sound volume as string))
                     end try
                 end if
             end tell
             """
         guard let out = run(src) else {
-            return State(title: "", artist: "", album: "", duration: 0, position: 0, playing: false, present: false)
+            return State(title: "", artist: "", album: "", duration: 0, position: 0, playing: false, present: false, volume: 0.5)
         }
         let parts = out.components(separatedBy: "\n")
-        guard parts.count >= 6 else {
-            return State(title: "", artist: "", album: "", duration: 0, position: 0, playing: false, present: false)
+        guard parts.count >= 7 else {
+            return State(title: "", artist: "", album: "", duration: 0, position: 0, playing: false, present: false, volume: 0.5)
         }
         return State(
             title: parts[0], artist: parts[1], album: parts[2],
             duration: Double(parts[3]) ?? 0,
             position: Double(parts[4]) ?? 0,
             playing: parts[5] == "playing",
-            present: true
+            present: true,
+            volume: min(max((Double(parts[6]) ?? 50) / 100, 0), 1)
         )
     }
 
@@ -146,7 +149,7 @@ enum MusicApp {
 
     /// Execute a relay command target. Returns false when Music can't comply.
     @discardableResult
-    nonisolated static func execute(action: String, position: Double?) -> Bool {
+    nonisolated static func execute(action: String, position: Double?, volume: Double? = nil) -> Bool {
         let cmd: String
         switch action {
         case "play": cmd = "play"
@@ -158,6 +161,9 @@ enum MusicApp {
         case "seek":
             guard let pos = position, pos.isFinite, pos >= 0 else { return false }
             cmd = "set player position to \(pos)"
+        case "volume":
+            guard let vol = volume, vol.isFinite, (0...1).contains(vol) else { return false }
+            cmd = "set sound volume to \(Int(vol * 100))"
         default: return false
         }
         return run("tell application \"Music\"\n\(cmd)\nend tell") != nil
