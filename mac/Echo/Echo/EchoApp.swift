@@ -24,8 +24,8 @@ struct EchoApp: App {
     }
 
     private var menuLabel: some View {
-        // The bar shows the note always; cover belongs in the panel, not the bar.
-        Image(systemName: "music.note")
+        // Radiating waves read as an echo; cover art belongs in the panel.
+        Image(systemName: "dot.radiowaves.left.and.right")
             .help(model.menuTitle)
     }
 
