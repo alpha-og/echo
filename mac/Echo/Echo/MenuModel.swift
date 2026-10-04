@@ -312,6 +312,9 @@ final class MenuModel: ObservableObject {
     private func handleMacCommand(_ text: String) {
         guard let data = text.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        // Belt and braces: the relay filters by role, but never execute a
+        // command addressed at the other side. Missing target means legacy.
+        if let t = obj["target"] as? String, t != "mac" && t != "unknown" { return }
         let action: String
         if let a = obj["action"] as? String { action = a }
         else if let inner = obj["Command"] as? [String: Any], let a = inner["action"] as? String { action = a }
@@ -708,7 +711,12 @@ final class MenuModel: ObservableObject {
                 MusicApp.execute(action: "pause", position: nil)
             }
             lastForwardedAt = Date()
-            await send(action)
+            // Address the command: untargeted means legacy broadcast and the
+            // relay would deliver it back to this Mac too, so Music.app
+            // would play/skip along with the phone.
+            var outgoing = action
+            outgoing["target"] = "iphone"
+            await send(outgoing)
         }
     }
 
