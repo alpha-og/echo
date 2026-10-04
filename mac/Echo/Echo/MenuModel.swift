@@ -658,11 +658,16 @@ final class MenuModel: ObservableObject {
     }
 
     /// Where transport goes: manual pick, else whoever is playing, else
-    /// whatever we paused last (resume), else self.
+    /// the side on display (last active with a track still present), else
+    /// whatever paused last, else self. Pausing on the phone itself must
+    /// still resume the phone — the display latch remembers it even though
+    /// no pause command passed through here.
     var effectiveTarget: DeviceSide {
         if let o = targetOverride { return o }
         let somethingPlaying = (iphoneTrack?.isPlaying ?? false) || (macTrack?.isPlaying ?? false)
         if somethingPlaying { return activeSideNow }
+        if activeSideNow == .iphone, iphoneTrack != nil { return .iphone }
+        if activeSideNow == .mac, macTrack != nil { return .mac }
         return lastPausedSide ?? .mac
     }
 
