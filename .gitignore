@@ -1,0 +1,16 @@
+# Rust build output (regenerate with `cargo build`)
+/target
+
+# Relay runtime state — never commit secrets or session tokens, even if
+# ECHO_STATE_DIR is pointed inside the repo during development
+sessions.json
+totp-secret
+
+# Xcode per-user noise (the projects themselves are committed)
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.ipa
+
+# macOS Finder noise
+.DS_Store
