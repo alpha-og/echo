@@ -42,6 +42,7 @@ struct ContentView: View {
     @State private var stableSince = Date()
     @State private var showSettings = false
     @State private var macVolumeDraft: Double?
+    @State private var macVolumeDraftAt = Date.distantPast
     @AppStorage("echo.onboarded") private var onboarded = false
     init(reporter: NowPlayingReporter, browser: EchoBrowser) {
         self.reporter = reporter as ReporterShim
@@ -461,9 +462,24 @@ struct ContentView: View {
             }
         }
         .onChange(of: reporter.mac?.volume) {
-            if let d = macVolumeDraft, let s = reporter.mac?.volume, abs(s - d) < 0.03 {
-                macVolumeDraft = nil
-            }
+            expireMacVolumeDraft()
+        }
+        .onChange(of: tick) {
+            expireMacVolumeDraft()
+        }
+    }
+
+    /// Drop the drag draft once snapshots converge on it, or after 5s when
+    /// a send never converged (dead socket). Either way the slider follows
+    /// snapshots again instead of sticking.
+    private func expireMacVolumeDraft() {
+        guard macVolumeDraft != nil else { return }
+        if let s = reporter.mac?.volume,
+           let d = macVolumeDraft,
+           abs(s - d) < 0.03 {
+            macVolumeDraft = nil
+        } else if Date().timeIntervalSince(macVolumeDraftAt) > 5 {
+            macVolumeDraft = nil
         }
     }
 
@@ -546,9 +562,10 @@ struct ContentView: View {
             LevelSlider(
                 value: macVolumeDraft ?? reporter.mac?.volume ?? 0.5,
                 accent: accent,
-                onChanged: { macVolumeDraft = $0 },
+                onChanged: { macVolumeDraft = $0; macVolumeDraftAt = Date() },
                 onEnded: { v in
                     macVolumeDraft = v
+                    macVolumeDraftAt = Date()
                     reporter.sendToMac("volume", volume: v)
                 }
             )

@@ -12,7 +12,13 @@ struct SystemVolumeSlider: View {
 
     @State private var level: Double = Double(AVAudioSession.sharedInstance().outputVolume)
     @State private var lastSet = Date.distantPast
-    @State private var driver: UISlider?
+    @State private var driver: MPVolumeView?
+
+    /// Fresh lookup every drag: the slider subview may not exist on the
+    /// first pass, so a cached lookup is allowed to stay nil forever.
+    private func systemSlider() -> UISlider? {
+        driver?.subviews.first(where: { $0 is UISlider }) as? UISlider
+    }
 
     var body: some View {
         ZStack {
@@ -26,8 +32,8 @@ struct SystemVolumeSlider: View {
                 onChanged: { v in
                     level = v
                     lastSet = Date()
-                    driver?.value = Float(v)
-                    driver?.sendActions(for: .valueChanged)
+                    systemSlider()?.value = Float(v)
+                    systemSlider()?.sendActions(for: .valueChanged)
                 }
             )
         }
@@ -42,9 +48,9 @@ struct SystemVolumeSlider: View {
     }
 }
 
-/// Hosts the hidden volume view and vends its slider once laid out.
+/// Hosts the hidden volume view. The caller looks up the slider on demand.
 private struct VolumeDriver: UIViewRepresentable {
-    var onSlider: (UISlider?) -> Void
+    var onHost: (MPVolumeView) -> Void
 
     func makeUIView(context: Context) -> MPVolumeView {
         let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 10, height: 10))
@@ -54,8 +60,6 @@ private struct VolumeDriver: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MPVolumeView, context: Context) {
-        view.subviews.first(where: { $0 is UISlider }).map {
-            onSlider($0 as? UISlider)
-        }
+        onHost(view)
     }
 }

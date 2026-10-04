@@ -31,6 +31,7 @@ struct EchoApp: App {
 
     @State private var tick = Date()
     @State private var menuVolumeDraft: Double?
+    @State private var menuVolumeDraftAt = Date.distantPast
 
     private var menuContent: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -55,6 +56,20 @@ struct EchoApp: App {
         guard secs.isFinite, secs >= 0 else { return "0:00" }
         let total = Int(secs)
         return "\(total / 60):\(String(format: "%02d", total % 60))"
+    }
+
+    /// Drop the drag draft once snapshots converge on it, or after 5s when
+    /// a send never converged. Either way the slider follows snapshots
+    /// again instead of sticking.
+    private func expireMenuVolumeDraft() {
+        guard menuVolumeDraft != nil else { return }
+        if let s = model.track?.volume,
+           let d = menuVolumeDraft,
+           abs(s - d) < 0.03 {
+            menuVolumeDraft = nil
+        } else if Date().timeIntervalSince(menuVolumeDraftAt) > 5 {
+            menuVolumeDraft = nil
+        }
     }
 
     /// Hostnames arrive as `Name-Model.local`. Present them as names.
@@ -153,10 +168,12 @@ struct EchoApp: App {
                         accent: model.artworkTint.map(Color.init(nsColor:)) ?? .accentColor,
                         onChanged: { v in
                             menuVolumeDraft = v
+                            menuVolumeDraftAt = Date()
                             Task { await model.sendVolume(v) }
                         },
                         onEnded: { v in
                             menuVolumeDraft = v
+                            menuVolumeDraftAt = Date()
                             Task { await model.sendVolume(v, final: true) }
                         }
                     )
@@ -165,10 +182,10 @@ struct EchoApp: App {
                         .foregroundStyle(.secondary)
                 }
                 .onChange(of: model.track?.volume) {
-                    if let d = menuVolumeDraft,
-                       let s = model.track?.volume, abs(s - d) < 0.03 {
-                        menuVolumeDraft = nil
-                    }
+                    expireMenuVolumeDraft()
+                }
+                .onChange(of: tick) {
+                    expireMenuVolumeDraft()
                 }
             }
         }
