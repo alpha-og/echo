@@ -38,9 +38,9 @@ final class AudioKeepalive {
                 return noErr
             }
             e.attach(src)
-            e.connect(src, to: e.mainMixerNode, fromBus: 0, toBus: 0, format: format)
-            e.mainMixerNode.outputVolume = 0
             do {
+                try e.connectNode(src, to: e.mainMixerNode, fromBus: 0, toBus: 0, format: format)
+                e.mainMixerNode.outputVolume = 0
                 try e.start()
                 self.engine = e
                 DispatchQueue.main.async { self.running = true }
