@@ -96,7 +96,7 @@ final class NowPlayingReporter: ObservableObject {
     @Published var artworkAccent: UIColor?
     /// Mac snapshot from the relay (nil = Mac unseen/offline).
     @Published var mac: MacSnapshot?
-    /// Bump on pairing failure; the code field shakes on change.
+    /// Incremented on pairing failure; the code field shakes on change.
     @Published var pairShake = 0
     var isIdle: Bool { !connected && storeID == nil }
     var playerIsPlaying: Bool { player.playbackState == .playing }
@@ -131,7 +131,8 @@ final class NowPlayingReporter: ObservableObject {
     private var pathMonitor: NWPathMonitor?
     private var monitorQueue: DispatchQueue?
     private var networkOK = true
-    /// Last takeover ping (either direction) — 3s cooldown stops ping-pong.
+    /// Timestamp of the last takeover in either direction. A 3s cooldown
+    /// suppresses control loops between the two sides.
     private var lastTakeoverMs: Int64 = 0
     /// Last inbound command — takeover never fires within 3s of one.
     private var lastCommandMs: Int64 = 0
@@ -271,7 +272,8 @@ final class NowPlayingReporter: ObservableObject {
     }
 
     func unpair() {
-        // Revoke server-side first so the session dies everywhere, then wipe local.
+        // Revoke server-side first so the relay invalidates the session,
+        // then wipe local state.
         if let tok = sessionToken {
             let h = normalizedHost()
             if !h.isEmpty, let url = URL(string: "http://\(h)/sessions") {
@@ -404,7 +406,8 @@ final class NowPlayingReporter: ObservableObject {
             setArtwork(nil, nil)
             return
         }
-        // Fallback chain: smaller cover still beats no cover, inside the 40KB frame budget.
+        // Fallback chain: prefer a smaller cover over none, inside the
+        // 40KB frame budget.
         for (edge, quality) in [(512, 0.55), (320, 0.5), (192, 0.5), (128, 0.4)] {
             if let img = art.image(at: CGSize(width: CGFloat(edge), height: CGFloat(edge))),
                let data = img.jpegData(compressionQuality: quality),
@@ -484,11 +487,10 @@ final class NowPlayingReporter: ObservableObject {
             lastArtworkKey = sid
             refreshArtwork(item: item)
         }
-        // Takeover: this phone started playing while the Mac is freshly
-        // playing → duck the Mac. Gated four ways so it fires once per real
-        // press, never in a heartbeat loop or a command echo:
-        // transition + 8s freshness (not the 15s display stale) + 3s
-        // cooldown since any takeover/command + socket must be live.
+        // Takeover: this phone started playing while the Mac snapshot is
+        // fresh and playing — pause the Mac. Fires once per playback
+        // transition. Guards: 8s snapshot freshness, 3s cooldown since any
+        // takeover or inbound command, live socket.
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         let locallyPlaying = player.playbackState == .playing
         if locallyPlaying, !wasLocallyPlaying, let m = mac, connected {
@@ -507,8 +509,8 @@ final class NowPlayingReporter: ObservableObject {
             snap["artwork"] = b64
         }
         let line = "\(snap["title"] as? String ?? "?") — \(snap["artist"] as? String ?? "?")"
-        // Publish runs on a tight loop; only assign on change so the UI
-        // doesn't re-render (and re-animate) identical state.
+        // Publish runs continuously; assign only on change to avoid
+        // redundant view updates on identical state.
         if line != statusLine { statusLine = line }
         if sid != storeID { storeID = sid }
         let elapsed = snap["elapsed"] as? Double ?? 0
@@ -584,8 +586,8 @@ final class NowPlayingReporter: ObservableObject {
     /// side: if this phone is playing, pause it first so the Mac becomes
     /// the only player.
     func sendToMac(_ action: String) {
-        // Local pause is the takeover itself: stamp it so publish() won't
-        // echo a pause straight back and ping-pong.
+        // The local pause is the takeover itself: record it so publish()
+        // does not answer with a reciprocal pause.
         if action != "pause", player.playbackState == .playing {
             player.pause()
             lastTakeoverMs = Int64(Date().timeIntervalSince1970 * 1000)
@@ -634,8 +636,8 @@ final class NowPlayingReporter: ObservableObject {
         return (frac, "\(Self.clock(pos)) / \(Self.clock(dur))")
     }
 
-    /// Drop the Mac card when its publisher has been gone a while (relay or
-    /// menu app quit). Snapshots arrive every ~2s, so 30s is long dead.
+    /// Drop the Mac card after 30s without a snapshot (relay or menu app
+    /// quit). Snapshots arrive every ~2s.
     func pruneStaleMac(now: Date = Date()) {
         if let m = mac,
            Int64(now.timeIntervalSince1970 * 1000) - m.updatedMs > 30_000 {

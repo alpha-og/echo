@@ -20,29 +20,37 @@ struct MarqueeText: View {
                     .font(font)
                     .lineLimit(1)
                     .frame(width: geo.size.width, alignment: centered ? .center : .leading)
-                    .background(widthReader)
             } else {
                 Text(text)
                     .font(font)
                     .fixedSize(horizontal: true, vertical: false)
                     .offset(x: scrolling ? -(textWidth - geo.size.width) : 0)
                     .mask(edgeFade(width: geo.size.width))
-                    .background(widthReader)
                     .onAppear { startScroll(distance: textWidth - geo.size.width) }
             }
         }
         .frame(height: height)
+        .background(measurer)
+        .onPreferenceChange(WidthKey.self) { textWidth = $0 }
         .onChange(of: text) {
             scrolling = false
             textWidth = 0
         }
     }
 
-    private var widthReader: some View {
-        GeometryReader { g in
-            Color.clear.preference(key: WidthKey.self, value: g.size.width)
-        }
-        .onPreferenceChange(WidthKey.self) { textWidth = $0 }
+    /// Intrinsic text width, measured outside any constraining frame so
+    /// overflow is detected correctly.
+    private var measurer: some View {
+        Text(text)
+            .font(font)
+            .fixedSize(horizontal: true, vertical: false)
+            .background(
+                GeometryReader { g in
+                    Color.clear.preference(key: WidthKey.self, value: g.size.width)
+                }
+            )
+            .opacity(0)
+            .allowsHitTesting(false)
     }
 
     private func startScroll(distance: CGFloat) {

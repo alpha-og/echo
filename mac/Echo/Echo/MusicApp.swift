@@ -76,10 +76,10 @@ enum MusicApp {
     }
 
     /// Album art via the public iTunes Search API (no auth needed).
-    /// AppleScript `data of artwork` only yields an object reference for
-    /// streamed tracks, so catalog search is the honest path. Track-change
-    /// only, downscaled into the 40KB frame budget. No confident match
-    /// beats a wrong cover: mismatches return nil.
+    /// AppleScript `data of artwork` yields only an object reference for
+    /// streamed tracks, so catalog search is the reliable path. Track-change
+    /// only, downscaled into the 40KB frame budget. A missing cover is
+    /// preferable to a wrong one: mismatches return nil.
     nonisolated static func coverArtwork(title: String, artist: String, maxBytes: Int = 40_000) async -> Data? {
         var comps = URLComponents(string: "https://itunes.apple.com/search")
         comps?.queryItems = [

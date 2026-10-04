@@ -40,11 +40,12 @@ fn secret_path() -> PathBuf {
     state_file("totp-secret")
 }
 
-/// Persisted `/pair` session tokens: pair once ever, survive restarts.
+/// Persisted `/pair` session tokens. Tokens survive restarts; pairing is a
+/// one-time step per device.
 fn sessions_path() -> PathBuf {
     state_file("sessions.json")
 }
-/// Sessions idle longer than this are garbage (phone wiped/lost) and pruned.
+/// Sessions idle past this TTL are stale and pruned.
 pub(crate) const SESSION_IDLE_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
 
 pub(crate) fn load_sessions() -> HashMap<String, Instant> {
@@ -202,9 +203,10 @@ pub(crate) struct PairRequestReq {
     device: Option<String>,
 }
 
-/// Phone tapped a Mac: remember who asked so the menu can pop the code.
-/// Unauthenticated by necessity (the phone has no token yet); throttled and
-/// short-lived, and the code itself is still required to complete pairing.
+/// Phone requested pairing: record who asked so the menu can present the
+/// code. Unauthenticated by necessity (the phone holds no token yet);
+/// entries are throttled and short-lived, and the code is still required
+/// to complete pairing.
 pub(crate) async fn post_pair_request(
     State(st): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -217,7 +219,7 @@ pub(crate) async fn post_pair_request(
     }
     let mut m = st.pair_requests.lock().await;
     m.retain(|_, (t, _)| t.elapsed() < PAIR_REQUEST_TTL);
-    // One outstanding request per IP; re-taps just refresh the timer.
+    // One outstanding request per IP; repeat requests refresh the timer.
     m.insert(addr.ip(), (Instant::now(), req.device.clone()));
     if m.len() > 32 {
         m.clear();
@@ -233,8 +235,8 @@ pub(crate) async fn delete_pair_request(
     (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }
 
-/// Loopback-only in practice (LAN callers hold no session yet): is anyone
-/// asking to pair right now, and which device asked last?
+/// Answered by the menu app over loopback: whether a pairing request is
+/// pending, and which device asked last.
 pub(crate) async fn get_pair_requests(
     State(st): State<AppState>,
     headers: HeaderMap,

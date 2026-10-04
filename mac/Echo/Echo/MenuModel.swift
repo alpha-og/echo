@@ -20,7 +20,7 @@ struct BarTrack {
 }
 
 /// Which side commands and display defer to. Mirrors `active_side` in
-/// `src/protocol.rs`: whoever is playing wins; ties go to self.
+/// `src/protocol.rs`, plus last-active stickiness on ties (see MenuModel).
 enum DeviceSide {
     case iphone, mac
 }
@@ -62,10 +62,10 @@ final class MenuModel: ObservableObject {
 
     /// Manual control target. nil = Auto (whoever is playing wins).
     @Published var targetOverride: DeviceSide?
-    /// Last side seen playing. Ties (both paused) stick here instead of
-    /// flipping to self — pausing the iPhone must not surface the Mac track.
+    /// Last side seen playing. Pauses resolve here, so pausing the iPhone
+    /// leaves the iPhone track on display.
     private var lastActiveSide: DeviceSide = .mac
-    /// Side our transport last paused. A later play resumes here, not self.
+    /// Side most recently paused by transport. A later play resumes there.
     private var lastPausedSide: DeviceSide? {
         didSet {
             if let s = lastPausedSide {
@@ -80,9 +80,9 @@ final class MenuModel: ObservableObject {
     private var relayProcess: Process?
     private var autoStarted = false
     private let bridge = NowPlayingBridge()
-    /// When we last forwarded transport to the iPhone. If the Mac wakes up
-    /// on its own inside this window (same keypress also delivered to
-    /// Music.app, which we cannot unregister), it wasn't user intent.
+    /// Timestamp of the last transport forwarded to the iPhone. The same
+    /// keypress also reaches Music.app directly; a Mac wake inside this
+    /// window is attributed to that, not to deliberate input.
     private var lastForwardedAt: Date?
 
     init() {
@@ -95,7 +95,7 @@ final class MenuModel: ObservableObject {
             Task { @MainActor [weak self] in await self?.systemCommand(action) }
         }
         // Synchronous by necessity: an async hop may never execute — the
-        // process can exit before a scheduled task runs. queue:.main
+        // process can exit before a scheduled task runs. queue: .main
         // guarantees the main thread, so assuming isolation is sound.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
@@ -169,7 +169,8 @@ final class MenuModel: ObservableObject {
             macTrack = music.present ? macTrackFrom(music) : nil
             macWS?.cancel(with: .goingAway, reason: nil)
             macWS = nil
-            // Relay down and we haven't tried yet: launch the bundled copy once.
+            // Relay down and auto-start not yet attempted: launch the
+            // bundled copy once.
             if !autoStarted {
                 autoStarted = true
                 startRelay()
@@ -200,7 +201,7 @@ final class MenuModel: ObservableObject {
             let fresh = macTrackFrom(music)
             let key = "\(fresh.title)\n\(fresh.artist)"
             if key != lastArtKey {
-                // New track: drop old art, fetch anew.
+                // New track: clear stored art and fetch again.
                 lastArtKey = key
                 lastArtB64 = nil
                 lastArtImage = nil
@@ -261,10 +262,10 @@ final class MenuModel: ObservableObject {
         publishMac()
     }
 
-    /// Guardian: if the Mac woke up within ~3s of us forwarding transport to
-    /// the iPhone, that wake was the keypress leaking into Music.app — undo it.
-    /// Deliberate Mac plays (UI, handoff, mac-targeted keys) never arm the
-    /// window, so they survive.
+    /// Corrects an unintended Mac wake: if the Mac starts playing within
+    /// ~3s of transport forwarded to the iPhone, the wake came from the
+    /// keypress reaching Music.app directly. Deliberate Mac plays (UI,
+    /// handoff, Mac-targeted keys) never open this window, so they persist.
     private func suppressKeyWake() {
         guard let fwd = lastForwardedAt,
               Date().timeIntervalSince(fwd) < 3,
@@ -312,8 +313,9 @@ final class MenuModel: ObservableObject {
     private func handleMacCommand(_ text: String) {
         guard let data = text.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        // Belt and braces: the relay filters by role, but never execute a
-        // command addressed at the other side. Missing target means legacy.
+        // Defense in depth: the relay filters by role, but a command
+        // addressed at the other side must never execute here. A missing
+        // target indicates a legacy sender.
         if let t = obj["target"] as? String, t != "mac" && t != "unknown" { return }
         let action: String
         if let a = obj["action"] as? String { action = a }
@@ -387,7 +389,7 @@ final class MenuModel: ObservableObject {
     }
 
     /// True from tap until the poll confirms the new state (or times out).
-    /// Drives the spinner so Start/Stop/Restart feel instant.
+    /// Drives the spinner for immediate feedback.
     @Published var relayBusy = false
     private var relayWanted: Bool?
     private var relayWantedAt = Date.distantPast
@@ -412,9 +414,9 @@ final class MenuModel: ObservableObject {
 
     private static func isEcho(pid: Int32) -> Bool {
         // Exact binary names only: a contains-match would also hit "Echo"
-        // itself (it holds client sockets on :11447) and Stop would kill
-        // the menu app instead of the relay. "amsync" is the pre-rename
-        // binary; it owns the same port and must not outlive this app.
+        // itself (it holds client sockets on :11447) and Stop would act on
+        // the menu app instead of the relay. "amsync" is the prior binary
+        // name; it serves the same port.
         if pid == getpid() { return false }
         let ps = Process()
         ps.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -443,7 +445,8 @@ final class MenuModel: ObservableObject {
         return pids
     }
 
-    /// Block (off-main) until :11447 is free or the timeout lapses.
+    /// Block the calling (background) thread until :11447 is free or the
+    /// timeout lapses.
     private static func waitPortFree(timeoutMs: Int) async -> Bool {
         let deadline = Date(timeIntervalSinceNow: Double(timeoutMs) / 1000)
         while Date() < deadline {
@@ -477,8 +480,7 @@ final class MenuModel: ObservableObject {
         }
     }
 
-    /// Quit-time cleanup: no orphan relays. The menu owns the port while
-    /// installed; a terminal `cargo run` can always start another after.
+    /// Quit-time cleanup: terminate relays so none outlive the app.
     func stopSpawnedRelay() {
         relayProcess?.terminate()
         relayProcess = nil
@@ -541,7 +543,7 @@ final class MenuModel: ObservableObject {
                 data: pipe.fileHandleForReading.readDataToEndOfFile(),
                 encoding: .utf8
             ) ?? ""
-            // "pairing code: 123456  (valid 27s)" -> code + seconds.
+            // Parse `pairing code: 123456  (valid 27s)` into code and seconds.
             let nums = out.components(separatedBy: CharacterSet.decimalDigits.inverted)
                 .filter { !$0.isEmpty }
             await MainActor.run { [weak self] in
@@ -563,7 +565,7 @@ final class MenuModel: ObservableObject {
 
     private func startCountdown() {
         countdown?.invalidate()
-        // .common modes: a default-mode timer freezes while the menu is open.
+        // Runloop .common modes: the default mode stalls while a menu is open.
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -598,7 +600,7 @@ final class MenuModel: ObservableObject {
                 }
             }
         } catch {
-            // Relay down: refresh() already reports that; stay quiet here.
+            // Relay down: refresh() already reports that state; skip here.
         }
     }
 
@@ -662,9 +664,8 @@ final class MenuModel: ObservableObject {
 
     /// Where transport goes: manual pick, else whoever is playing, else
     /// the side on display (last active with a track still present), else
-    /// whatever paused last, else self. Pausing on the phone itself must
-    /// still resume the phone — the display latch remembers it even though
-    /// no pause command passed through here.
+    /// the side paused last, else self. The display latch covers pauses
+    /// made on the phone itself, which issue no command through here.
     var effectiveTarget: DeviceSide {
         if let o = targetOverride { return o }
         let somethingPlaying = (iphoneTrack?.isPlaying ?? false) || (macTrack?.isPlaying ?? false)
@@ -712,8 +713,8 @@ final class MenuModel: ObservableObject {
             }
             lastForwardedAt = Date()
             // Address the command: untargeted means legacy broadcast and the
-            // relay would deliver it back to this Mac too, so Music.app
-            // would play/skip along with the phone.
+            // relay would deliver it back to this Mac too, executing
+            // locally as well as on the phone.
             var outgoing = action
             outgoing["target"] = "iphone"
             await send(outgoing)
@@ -731,7 +732,7 @@ final class MenuModel: ObservableObject {
         guard let t = iphoneTrack, let sid = t.storeID else { return }
         guard let url = URL(string: "https://music.apple.com/us/song/\(sid)?i=\(sid)") else { return }
         NSWorkspace.shared.open(url)
-        // Music needs a moment to load the track before seeking.
+        // Allow Music a moment to load the track before seeking.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [pos = t.position] in
             let src = """
                 tell application "Music"

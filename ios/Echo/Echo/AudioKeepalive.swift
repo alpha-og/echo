@@ -9,7 +9,8 @@ import Foundation
 /// `.mixWithOthers` keeps our socket alive without ducking music.
 ///
 /// Personal sideload only: App Store review rejects silent audio. Gated
-/// behind the "Stay connected" toggle, off = previous behavior.
+/// behind the "Stay connected" toggle; when off, the app suspends
+/// normally in the background.
 final class AudioKeepalive {
     private var engine: AVAudioEngine?
     private(set) var running = false

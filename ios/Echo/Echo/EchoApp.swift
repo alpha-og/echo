@@ -36,8 +36,6 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedEcho: DiscoveredEcho?
     @State private var showManual = false
-    @State private var manualSide: Side?
-    @State private var manualAt = Date.distantPast
     @State private var tick = Date()
     @State private var stableSide: Side = .iphone
     @State private var stableSince = Date()
@@ -48,9 +46,11 @@ struct ContentView: View {
         self._browser = ObservedObject(wrappedValue: browser)
     }
 
-    enum Side: String, CaseIterable {
+    enum Side: String, CaseIterable, Identifiable {
         case iphone = "iPhone"
         case mac = "Mac"
+
+        var id: String { rawValue }
     }
 
     private var autoSide: Side { reporter.macIsActive ? .mac : .iphone }
@@ -65,12 +65,13 @@ struct ContentView: View {
         return autoSide == stableSide ? autoSide : stableSide
     }
 
-    private var effectiveSide: Side {
-        if let m = manualSide,
-           (m == settledAutoSide || Date().timeIntervalSince(manualAt) < 12) {
-            return m
-        }
-        return settledAutoSide
+    @State private var expandedSide: Side?
+
+    /// Display order: active side first. Hysteresis keeps the order from
+    /// flipping on a single stale snapshot.
+    private var orderedSides: [Side] {
+        let other: Side = settledAutoSide == .mac ? .iphone : .mac
+        return [settledAutoSide, other]
     }
 
     private var accent: Color {
@@ -124,6 +125,18 @@ struct ContentView: View {
                 reporter.connectIfPaired()
             }
         }
+        .onChange(of: autoSide) {
+            // Hysteresis bookkeeping: only adopt the new auto side for
+            // ordering after it holds for 3s.
+            if autoSide != stableSide {
+                if Date().timeIntervalSince(stableSince) >= 3 {
+                    stableSide = autoSide
+                    stableSince = Date()
+                }
+            } else {
+                stableSince = Date()
+            }
+        }
         .onChange(of: reporter.paired) {
             if reporter.paired {
                 browser.stop()
@@ -136,40 +149,18 @@ struct ContentView: View {
     // MARK: - Player
 
     private var playerView: some View {
-        VStack(spacing: 16) {
-            Picker("Device", selection: Binding(
-                get: { effectiveSide },
-                set: { manualSide = $0; manualAt = Date() }
-            )) {
-                ForEach(Side.allCases, id: \.self) { Text($0.rawValue) }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 260)
-            .onChange(of: autoSide) {
-                // Hysteresis bookkeeping: only adopt the new auto side after
-                // it holds; manual picks win for 12s.
-                if autoSide != stableSide {
-                    if Date().timeIntervalSince(stableSince) >= 3 {
-                        stableSide = autoSide
-                        stableSince = Date()
-                    }
-                } else {
-                    stableSince = Date()
-                }
-                if let m = manualSide, m != settledAutoSide,
-                   Date().timeIntervalSince(manualAt) >= 12 {
-                    manualSide = nil
+        ScrollView {
+            VStack(spacing: 12) {
+                ForEach(Array(orderedSides.enumerated()), id: \.element) { i, side in
+                    deviceCard(side: side, active: i == 0)
                 }
             }
-            if effectiveSide == .mac {
-                macPlayer
-            } else {
-                localPlayer
-            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 28)
         }
-        .padding(28)
         .background {
-            if effectiveSide == .iphone {
+            if settledAutoSide == .iphone {
                 ZStack {
                     if let img = reporter.artwork {
                         Image(uiImage: img)
@@ -190,12 +181,156 @@ struct ContentView: View {
             }
         }
         .overlay(alignment: .bottom) { commandPill }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: effectiveSide)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: settledAutoSide)
         .sensoryFeedback(.impact(weight: .light), trigger: reporter.commandSeq)
         .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { t in
             tick = t
             reporter.pruneStaleMac(now: t)
         }
+        .sheet(item: $expandedSide) { side in
+            expandedPlayer(side: side)
+        }
+    }
+
+    /// Compact per-device card: cover, titles, progress, transport.
+    /// The active side sorts first and carries the accent ring.
+    private func deviceCard(side: Side, active: Bool) -> some View {
+        Button { expandedSide = side } label: {
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    cardCover(side: side)
+                    VStack(alignment: .leading, spacing: 3) {
+                        MarqueeText(
+                            text: cardTitle(side: side),
+                            font: .headline,
+                            height: 24,
+                            centered: false
+                        )
+                        .foregroundStyle(.primary)
+                        Text(cardSubtitle(side: side))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    HStack(spacing: 16) {
+                        Button { cardTransport(side: side, "previous") } label: {
+                            Image(systemName: "backward.fill")
+                                .font(.body)
+                        }
+                        Button { cardTransport(side: side, "toggle") } label: {
+                            Image(systemName: cardIsPlaying(side: side) ? "pause.fill" : "play.fill")
+                                .font(.system(size: 26))
+                        }
+                        Button { cardTransport(side: side, "next") } label: {
+                            Image(systemName: "forward.fill")
+                                .font(.body)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                    .buttonStyle(.plain)
+                    .disabled(!cardHasTrack(side: side))
+                }
+                ProgressView(value: cardProgress(side: side))
+                    .controlSize(.small)
+                    .tint(cardAccent(side: side))
+            }
+            .padding(14)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 20))
+            .overlay {
+                if active {
+                    RoundedRectangle(cornerRadius: 20)
+                        .strokeBorder(accent.opacity(0.6), lineWidth: 1.5)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func cardCover(side: Side) -> some View {
+        Group {
+            if let img = cardArtwork(side: side) {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Image(systemName: "music.note")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.secondary.opacity(0.12))
+            }
+        }
+        .frame(width: 56, height: 56)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func cardArtwork(side: Side) -> UIImage? {
+        if side == .iphone {
+            return reporter.artwork
+        }
+        return reporter.mac?.artwork.flatMap(UIImage.init(data:))
+    }
+
+    private func cardTitle(side: Side) -> String {
+        if side == .iphone {
+            return reporter.isIdle ? "Nothing playing" : reporter.statusLine
+        }
+        return reporter.mac?.title ?? "Waiting for Mac"
+    }
+
+    private func cardSubtitle(side: Side) -> String {
+        if side == .iphone {
+            return reporter.isIdle ? "Play Apple Music on this iPhone" : "This iPhone"
+        }
+        guard let m = reporter.mac else { return "Play Music.app on your Mac" }
+        return m.deviceName + " · " + m.artist + (m.isStale ? " · stale" : "")
+    }
+
+    private func cardProgress(side: Side) -> Double {
+        side == .iphone ? reporter.localProgress().fraction : reporter.macProgress(now: tick).fraction
+    }
+
+    private func cardAccent(side: Side) -> Color {
+        if side == .iphone { return accent }
+        return reporter.mac?.accent.map(Color.init(uiColor:)) ?? .accentColor
+    }
+
+    private func cardIsPlaying(side: Side) -> Bool {
+        side == .iphone ? reporter.playerIsPlaying : (reporter.mac?.isPlaying ?? false)
+    }
+
+    private func cardHasTrack(side: Side) -> Bool {
+        side == .iphone ? !reporter.isIdle : reporter.mac != nil
+    }
+
+    private func cardTransport(side: Side, _ action: String) {
+        if side == .iphone {
+            reporter.localTransport(action)
+            return
+        }
+        guard let m = reporter.mac else { return }
+        if action == "toggle" {
+            reporter.sendToMac(m.isPlaying ? "pause" : "play")
+        } else {
+            reporter.sendToMac(action)
+        }
+    }
+
+    /// Full player for the tapped card.
+    private func expandedPlayer(side: Side) -> some View {
+        NavigationStack {
+            (side == .mac ? AnyView(macPlayer) : AnyView(localPlayer))
+                .padding(28)
+                .navigationTitle(side.rawValue)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { expandedSide = nil }
+                    }
+                }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private var localPlayer: some View {

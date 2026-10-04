@@ -65,7 +65,7 @@ pub struct NowPlayingState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artwork: Option<String>,
     /// Which device published this. Set by the relay from the connection
-    /// role; senders should set it too (old clients omit it = iphone).
+    /// role; senders without a role default to iphone.
     #[serde(default)]
     pub origin: DeviceRole,
 }

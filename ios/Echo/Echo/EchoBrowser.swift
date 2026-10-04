@@ -10,13 +10,11 @@ struct DiscoveredEcho: Identifiable, Equatable {
     let port: Int
 }
 
-/// Browses for echo relays. No pairing/auth here — that still happens
-/// at `/pair` with the TOTP code after the user taps a Mac.
+/// Discovery only. Pairing completes at `/pair` with the TOTP code after
+/// the user selects a relay.
 ///
-/// Threading: everything runs synchronously on the main runloop (the browser
-/// is started from the main actor and NetService schedules callbacks there),
-/// so no values ever cross isolation boundaries. This is what keeps
-/// non-`Sendable` `NetService` objects out of `@Sendable` closures.
+/// Threading: all callbacks run on the main runloop (`NetService` is not
+/// `Sendable`), so no values cross isolation boundaries.
 final class EchoBrowser: NSObject, ObservableObject {
     @Published var echoes: [DiscoveredEcho] = []
     @Published var browsing = false

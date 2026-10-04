@@ -68,7 +68,8 @@ pub(crate) fn bearer(headers: &HeaderMap, q: &HashMap<String, String>, addr: Soc
     if presented.is_empty() {
         return false;
     }
-    // Touch on use: idle sessions are phone-side garbage (wiped/reinstalled).
+    // Touch on use: sessions idle past the TTL are stale entries from
+    // wiped or reinstalled phones.
     if let Ok(mut sessions) = st.sessions.try_write() {
         let now = Instant::now();
         if presented.iter().any(|p| sessions.contains_key(p)) {
@@ -108,7 +109,7 @@ fn advertise_mdns(port: u16) -> Option<dns_sd::DNSService> {
         &["v=1"],
     ) {
         Ok(svc) => {
-            // Addresses come from the OS responder, not this log line.
+            // Address resolution stays with the OS responder.
             info!("advertising '{instance}' on port {port} (_echo._tcp)");
             Some(svc)
         }
@@ -161,7 +162,8 @@ pub(crate) async fn serve(bind: &str) -> anyhow::Result<()> {
         advertise_mdns(port)
     };
     info!("pairing: run `echo pair-code` on this Mac, type it into the phone");
-    // Reaper: sessions idle 30d+ are phone-side garbage (wiped/reinstalled).
+    // Reaper: sessions idle past the TTL belong to wiped or reinstalled
+    // phones and are pruned hourly.
     {
         let sessions = sessions.clone();
         tokio::spawn(async move {

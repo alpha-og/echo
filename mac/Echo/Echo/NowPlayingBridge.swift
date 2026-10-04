@@ -61,8 +61,8 @@ final class NowPlayingBridge {
             MPMediaItemPropertyPlaybackDuration: t.duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: t.position,
             MPNowPlayingInfoPropertyPlaybackRate: t.isPlaying ? 1.0 : 0.0,
-            // Claim the audio slot explicitly: third-party Now Playing readers
-            // (Control Center widgets, Dynamic Island clones) key off this.
+            // Claim the audio slot explicitly: system Now Playing readers
+            // key off this property.
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
         ]
         if let art = t.artwork {
